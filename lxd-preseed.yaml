@@ -1,107 +1,104 @@
 # Configuración global del demonio LXD
 config:
-    core.https_address: "127.0.0.1:50000"
-    core.trust_password: "123456"
-    images.auto_update_interval: "0"
+  core.https_address: "127.0.0.1:50000"
+  core.trust_password: "123456"
+  images.auto_update_interval: "0"
 
 # Redes virtuales
 networks:
-    # Red de laboratorio para contenedores stateless
-    - name: lab-stateless
-        type: bridge
-        config:
-            ipv4.address: 10.50.10.1/24
-            ipv4.nat: "true"
-            ipv6.address: none
-            dns.domain: "lab.internal"
-            dns.mode: "managed"
+  - name: lab-stateless
+    type: bridge
+    config:
+      ipv4.address: 10.50.10.1/24
+      ipv4.nat: "true"
+      ipv6.address: none
+      dns.domain: "lab.internal"
+      dns.mode: "managed"
 
-    # Red de VMs persistentes
-    - name: lab-persistent
-        type: bridge
-        config:
-            ipv4.address: 10.50.20.1/24
-            ipv4.nat: "true"
-            ipv6.address: none
-            dns.domain: "vm.lab.internal"
-            dns.mode: "managed"
+  - name: lab-persistent
+    type: bridge
+    config:
+      ipv4.address: 10.50.20.1/24
+      ipv4.nat: "true"
+      ipv6.address: none
+      dns.domain: "vm.lab.internal"
+      dns.mode: "managed"
 
-    # Red de administración
-    - name: admin-net
-        type: bridge
-        config:
-            ipv4.address: 10.50.100.1/24
-            ipv4.nat: "false"
-            ipv6.address: none
+  - name: admin-net
+    type: bridge
+    config:
+      ipv4.address: 10.50.100.1/24
+      ipv4.nat: "false"
+      ipv6.address: none
 
 # Pools de almacenamiento
 storage_pools:
-    - name: stateless-pool
-        driver: zfs
-        config:
-            size: 20GB
+  - name: stateless-pool
+    driver: zfs
+    config:
+      size: 20GB
 
-    - name: persistent-pool
-        driver: zfs
-        config:
-            size: 40GB
+  - name: persistent-pool
+    driver: zfs
+    config:
+      size: 40GB
 
 # Perfiles de laboratorio
 profiles:
-    - name: stateless
-        description: Contenedores sin persistencia
-        config:
-            limits.cpu: "2"
-            limits.memory: 2GB
-        devices:
-            root:
-                type: disk
-                pool: stateless-pool
-                path: /
-            eth0:
-                type: nic
-                network: lab-stateless
-                name: eth0
+  - name: stateless
+    description: Contenedores sin persistencia
+    config:
+      limits.cpu: "2"
+      limits.memory: 2GB
+    devices:
+      root:
+        type: disk
+        pool: stateless-pool
+        path: /
+      eth0:
+        type: nic
+        network: lab-stateless
+        name: eth0
 
-    - name: persistent
-        description: VMs persistentes para alumnos
-        config:
-            limits.cpu: "4"
-            limits.memory: 4GB
-        devices:
-            root:
-                type: disk
-                pool: persistent-pool
-                path: /
-            eth0:
-                type: nic
-                network: lab-persistent
-                name: eth0
+  - name: persistent
+    description: VMs persistentes para alumnos
+    config:
+      limits.cpu: "4"
+      limits.memory: 4GB
+    devices:
+      root:
+        type: disk
+        pool: persistent-pool
+        path: /
+      eth0:
+        type: nic
+        network: lab-persistent
+        name: eth0
 
-    - name: admin
-        description: Entorno de administración
-        config:
-            limits.cpu: "2"
-            limits.memory: 2GB
-        devices:
-            root:
-                type: disk
-                pool: persistent-pool
-                path: /
-            eth0:
-                type: nic
-                network: admin-net
-                name: eth0
+  - name: admin
+    description: Entorno de administración
+    config:
+      limits.cpu: "2"
+      limits.memory: 2GB
+    devices:
+      root:
+        type: disk
+        pool: persistent-pool
+        path: /
+      eth0:
+        type: nic
+        network: admin-net
+        name: eth0
 
 # Proyectos
 projects:
-    - name: test
+  - name: test
     description: Proyecto por defecto para pruebas
     config: {}
 
-    - name: labs
+  - name: labs
     description: Entorno de laboratorio de alumnos
     config:
-        features.images: "true"
-        features.networks: "true"
-        features.profiles: "true"
+      features.images: "true"
+      features.networks: "true"
+      features.profiles: "true"
