@@ -1,6 +1,6 @@
 # Configuración global del demonio LXD
 config:
-core.https_address: "127.0.0.1:50000"
+    core.https_address: "127.0.0.1:50000"
     core.trust_password: "123456"
     images.auto_update_interval: "0"
 
