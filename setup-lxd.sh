@@ -41,7 +41,7 @@ else
 fi
 
 echo "==> Listando imágenes Ubuntu 22.04 x86_64"
-lxc image list ubuntu-releases: | grep 22.04 | grep x86_64 || true
+echo "lxc image list ubuntu-releases: | grep 22.04 | grep x86_64 || true"
 
 echo "==> Copiando imágenes locales"
 if ! lxc image list local: | grep -q ubuntu-22.04-vm; then
