@@ -6,6 +6,7 @@ config:
 
 # Redes virtuales
 networks:
+  # Red de laboratorio para contenedores stateless
   - name: lab-stateless
     type: bridge
     config:
@@ -15,6 +16,7 @@ networks:
       dns.domain: "lab.internal"
       dns.mode: "managed"
 
+  # Red de VMs persistentes
   - name: lab-persistent
     type: bridge
     config:
@@ -24,6 +26,7 @@ networks:
       dns.domain: "vm.lab.internal"
       dns.mode: "managed"
 
+  # Red de administración
   - name: admin-net
     type: bridge
     config:
