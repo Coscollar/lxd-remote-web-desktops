@@ -54,7 +54,7 @@ fi
 
 echo "==> Inicializando LXD desde preseed"
 if [ -f lxd-preseed.yaml ]; then
-  sudo lxd init --preseed < lxd-preseed.yaml
+  sudo lxd init --preseed < ./lxd-preseed.yaml
 else
   echo "ERROR: No se encontró lxd-preseed.yaml"
   exit 1
