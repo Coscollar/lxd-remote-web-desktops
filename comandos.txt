@@ -1,0 +1,34 @@
+Instalar LXD: 
+	sudo snap install LXD
+	
+Ver que el user de la maquina es parte del grupo de LXD: 
+	getent group lxd | grep "$USER"
+	
+Si el comando no saca nada ejecutar:
+	sudo usermod -aG lxd "$USER"
+	newgrp lxd
+
+Pools ZFS:
+Crea el pool ZFS para contenedores stateless
+	sudo lxc storage create stateless-pool zfs size=20GB
+Crea el pool ZFS para VMs persistentes
+	sudo lxc storage create persistent-pool zfs size=40GB
+
+Imágenes (puede disponerse de otras):
+Añadir el remote oficial de ubuntu para mas imagenes
+	lxc remote add ubuntu-releases https://cloud-images.ubuntu.com/releases --protocol simplestreams
+Obtener lista de imagenes
+	lxc image list ubuntu-releases: | grep 22.04 | grep x86_64
+Nos quedamos con la ultima de container y virtual-machine
+	lxc image copy ubuntu-releases:cf181d732f32 local: --alias ubuntu-22.04-vm
+	lxc image copy ubuntu-releases:a6d2f7222476 local: --alias ubuntu-22.04-container
+
+Inicializar LXD a partir de un archivo de configuración
+	lxd init --preseed < lxd-preseed.yaml
+
+Validaciones tras la configuración:
+lxc storage list
+lxc network list
+lxc profile list
+lxc project list
+lxc image list local
