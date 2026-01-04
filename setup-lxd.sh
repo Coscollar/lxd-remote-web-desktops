@@ -60,6 +60,9 @@ else
   exit 1
 fi
 
+echo "==> Creando imagen base VM con escritorio MATE"
+./build-lab-vm-base-mate.sh
+
 echo "==> Validaciones finales"
 lxc storage list
 lxc network list
