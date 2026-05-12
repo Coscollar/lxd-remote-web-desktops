@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT="labs"
 BASE_VM="vm-base"
 IMAGE_ALIAS="lab-vm-base"
 IMAGE_SOURCE="local:ubuntu-22.04-vm"
-PROFILE="persistent"
 
-echo "==> Usando proyecto $PROJECT"
-lxc project switch "$PROJECT"
-
-if lxc image list | grep -q "$IMAGE_ALIAS"; then
+if lxc image list local: | grep -q "$IMAGE_ALIAS"; then
   echo "==> La imagen $IMAGE_ALIAS ya existe. Abortando."
   exit 0
 fi
@@ -18,7 +13,7 @@ fi
 echo "==> Creando VM temporal $BASE_VM"
 lxc launch "$IMAGE_SOURCE" "$BASE_VM" \
   --vm \
-  -p "$PROFILE"
+  -p persistent
 
 echo "==> Esperando arranque"
 sleep 30

@@ -1,5 +1,5 @@
 # lxd-remote-web-desktops
-Escritorios remotos por navegador con LXD
+Escritorios remotos por navegador con LXD en UBUNTU
 
 https://github.com/Coscollar/lxd-remote-web-desktops.git
 

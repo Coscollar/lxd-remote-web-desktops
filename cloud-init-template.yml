@@ -1,0 +1,24 @@
+#cloud-config
+users:
+  - name: {{username}}
+    primary_group: users
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+
+packages:
+  - vim
+  - curl
+  - git
+  - firefox
+
+runcmd:
+  - systemctl enable ssh
+  - systemctl enable xrdp
+
+write_files:
+  - path: /usr/local/bin/guardar-estado.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/bin/bash
+      lxc snapshot $(hostname) {{username}}-estado
