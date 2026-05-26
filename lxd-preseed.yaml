@@ -103,5 +103,4 @@ projects:
     description: Entorno de laboratorio de alumnos
     config:
       features.images: "true"
-      features.networks: "true"
       features.profiles: "true"
