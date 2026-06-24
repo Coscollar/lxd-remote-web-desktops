@@ -15,15 +15,25 @@ Gestionas la dimension de persistencia y ciclo de vida del doc de requisitos:
 - Auto-destruccion por: inactividad, fecha limite, o fin de curso escolar.
 - "Una instancia por lab y alumno".
 
-## Responsabilidades
-- Definir el esquema de snapshots: `{alumno}-{lab}-base` (punto inicial tras primer boot) vs estados intermedios. Sin proliferar snapshots infinitos.
-- Disenar la API/endpoint que el script dentro de la VM invoca (coordinar con @provision-api y @cloud-init-author) para:
-  - `POST /save` → `lxc snapshot <instancia> <tag>`
-  - `POST /reset` → `lxc restore <instancia> <tag>` (o destroy + recreate desde base)
-- Cron/timer o conmutacion situada en el `provision-api` que:
-  - Mide ultima actividad (timestamp en la sesion del alumno) y mata instancias inactivas.
-  - Tiene fecha limite por curso configurable.
-- Politica de limpieza: contenedores stateless no persisten, se destruyen tras cierre.
+## Esquema de snapshots (fijado)
+- Tag canonico en la **instancia** (no en alumno): `<instancia>:base` (snapshot unico tras primer boot + `cloud-init status --wait`), `<instancia>:k1..k5` (estados intermedios, retencion maxima 5). Al crear `k6`, purgar el mas viejo.
+- Snapshots nativos LXD **solo para VMs persistentes** (profile `persistent`, proyecto `labs`). Contenedores stateless no reciben snapshots.
+- La retencion (keep=5) evita saturar `persistent-pool` 40GB.
+
+## API expuesta (dentro de provision-api, endpoints delegados a este modulo)
+- `POST /save?lab=<hostname>` → `lxc snapshot <instancia> k<N> --project labs` + rotacion.
+- `POST /reset?lab=<hostname>` → `lxc restore <instancia> base --project labs` (siempre hacia base; no recrear la instancia).
+- `POST /restore?lab=<hostname>&tag=k2` → `lxc restore <instancia> k2 --project labs`.
+- `GET /snapshots?lab=<hostname>` → `lxc info <instancia> --project labs | grep -A20 Snapshots`.
+- La VM invoca estos endpoints via curl desde `lab-save`/`lab-reset` (ver @cloud-init-author); nunca ejecuta `lxc`.
+
+## Auto-destruccion
+- Scheduler: **systemd timer** que invoca un endpoint `POST /reap` en provision-api (o ticker interno del proceso FastAPI). No cron plano.
+- Criterios (configurables via `.env` o `config.toml`):
+  - Inactividad: `last_seen` + `IDLE_MINUTES` (p. ej. 60).
+  - Fecha limite por curso: `COURSE_DEADLINE=YYYY-MM-DD`.
+  - Logout explicito opcional.
+- Limpieza al arranque del servicio: inventario (`lxc list --project labs`) vs estado SQLite; instancias huerfanas se marcan o eliminan con telemetria.
 
 ## Restricciones
 - Reusa snapshots de LXD, no soluciones externas.

@@ -10,11 +10,11 @@ Basado en `Entorno de Laboratorio con LXD.md`. Config en `opencode.json` + `.ope
 ## 7 subagentes de dominio (invocables con `@`)
 - `@infra-lxd` — pools, redes, perfiles, proyectos, imágenes.
 - `@vm-base-builder` — imagen base VM `lab-vm-base` (MATE + xrdp).
-- `@cloud-init-author` — `cloud-init-template.yml` y cloud-init por alumno.
-- `@provision-api` — Python on-demand (webhook/API) lanza instancias por alumno.
-- `@web-gateway` — Apache Guacamole + guacd + Nginx reverse proxy.
-- `@policy-engine` — snapshots nativos LXD + auto-destrucción.
-- `@auth-designer` — esquema de autenticación ("AÚN POR VER").
+- `@cloud-init-author` — `cloud-init-template.yml` y cloud-init por alumno (sin passwords en claro).
+- `@provision-api` — Python + FastAPI + SQLite + systemd lanza/cura VMs, verifica JWT.
+- `@web-gateway` — Apache Guacamole + guacd + Nginx + certbot (TLS Let's Encrypt).
+- `@policy-engine` — snapshots nativos LXD (`base` + `k1..k5`) + auto-destrucción por inactividad/fecha.
+- `@auth-designer` — magic link por email + JWT httpOnly (HS256).
 
 ## 5 críticones (read-only, no editan)
 - `@critic-security` — secrets, puertos expuestos, fuga xrdp/VNC, `trust_password`.

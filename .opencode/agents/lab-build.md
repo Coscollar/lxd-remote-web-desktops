@@ -24,6 +24,9 @@ Eres el orquestador de IMPLEMENTACION del laboratorio LXD. Ejecutas el plan (pro
 - `simplestreams` de `ubuntu-releases` + alias estables locales.
 - Automatizacion via `lxc` CLI / scripts bash. Sin pasos manuales o bibliograficos.
 - guacd SIEMPRE intermedio para RDP/VNC. Sin exposicion directa de xrdp/VNC.
+- **LXD no se sustituye ni se modifica su config base** (`lxd-preseed.yaml`, pools, redes, perfiles). Ajustes incrementales via `lxc` CLI.
+- **Auth por magic link + JWT** (decidido en el doc). No passwords de alumnos en ningun sitio.
+- **Stack provision fijo**: Python + FastAPI + SQLite + systemd + JWT. TLS via certbot/Let's Encrypt en Nginx.
 
 ## Convenciones del repo (de AGENTS.md)
 - `1-server-setup-lxd.sh` es el entrypoint unico e idempotente (usa `grep -q` para evitar duplicar).
