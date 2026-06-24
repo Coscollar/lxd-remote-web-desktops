@@ -1,0 +1,59 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "lab-plan",
+  "permission": {
+    "edit": "ask",
+    "bash": "ask",
+    "external_directory": "ask"
+  },
+  "agent": {
+    "lab-plan": {
+      "description": "Orquestador de PLANIFICACION del laboratorio LXD. Analiza requisitos, descompone el roadmap y produce un plan de implementacion ejecutable. Delega en subagentes de dominio y criticos. No edita codigo.",
+      "mode": "primary",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "deny",
+        "task": {
+          "*": "deny",
+          "infra-lxd": "allow",
+          "vm-base-builder": "allow",
+          "cloud-init-author": "allow",
+          "provision-api": "allow",
+          "web-gateway": "allow",
+          "policy-engine": "allow",
+          "auth-designer": "allow",
+          "critic-security": "allow",
+          "critic-idempotency": "allow",
+          "critic-lxd-conventions": "allow",
+          "critic-reliability": "allow",
+          "critic-scalability": "allow"
+        }
+      }
+    },
+    "lab-build": {
+      "description": "Orquestador de IMPLEMENTACION del laboratorio LXD. Ejecuta los pasos del roadmap: crea/modifica scripts bash, YAML cloud-init, Python de provision, config Nginx/Guacamole. Delega en implementadores de dominio y llama a criticos tras cada paso.",
+      "mode": "primary",
+      "temperature": 0.2,
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "task": {
+          "*": "deny",
+          "infra-lxd": "allow",
+          "vm-base-builder": "allow",
+          "cloud-init-author": "allow",
+          "provision-api": "allow",
+          "web-gateway": "allow",
+          "policy-engine": "allow",
+          "auth-designer": "allow",
+          "critic-security": "allow",
+          "critic-idempotency": "allow",
+          "critic-lxd-conventions": "allow",
+          "critic-reliability": "allow",
+          "critic-scalability": "allow"
+        }
+      }
+    }
+  }
+}
