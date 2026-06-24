@@ -204,19 +204,37 @@ VM_FP=$($LXC image list ubuntu-releases: --format json 2>/dev/null | python3 -c 
 import sys, json
 data = json.load(sys.stdin)
 for img in data:
-    if img.get('type') == 'virtual-machine' and img.get('architecture') == 'x86_64':
-        aliases = [a['name'] for a in (img.get('aliases') or [])]
-        if any('22.04' in a for a in aliases):
-            print(img['fingerprint'])
-            break
+    if img.get('type') != 'virtual-machine' or img.get('architecture') != 'x86_64':
+        continue
+    aliases = [a['name'] for a in (img.get('aliases') or [])]
+    props = img.get('properties') or {}
+    release = props.get('release', '')
+    if release == '22.04' or any('22.04' in a for a in aliases):
+        print(img['fingerprint'])
+        break
 ")
 if [ -n "$VM_FP" ]; then
   echo "   VM fingerprint: $VM_FP"
   if ! $LXC image list local: 2>/dev/null | grep -q ubuntu-22.04-vm; then
     $LXC image copy "ubuntu-releases:$VM_FP" local: --alias ubuntu-22.04-vm
   fi
+  # Verificar tipo de la imagen copiada
+  COPIED_TYPE=$($LXC image list local: --format json 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for img in data:
+    aliases = [a['name'] for a in (img.get('aliases') or [])]
+    if any('ubuntu-22.04-vm' in a for a in aliases):
+        print(img.get('type', 'unknown'))
+        break
+" 2>/dev/null || echo "unknown")
+  if [ "$COPIED_TYPE" != "virtual-machine" ]; then
+    echo "   WARNING: La imagen copiada es tipo '$COPIED_TYPE', no 'virtual-machine'"
+  fi
 else
-  echo "   WARNING: No se encontró imagen VM Ubuntu 22.04"
+  echo "   WARNING: No se encontró imagen VM Ubuntu 22.04 en ubuntu-releases"
+  echo "   Intentando listar imágenes disponibles para depuración..."
+  $LXC image list ubuntu-releases: --format csv 2>/dev/null | head -20 || true
 fi
 
 echo "   Buscando imagen contenedor..."
@@ -224,11 +242,14 @@ CT_FP=$($LXC image list ubuntu-releases: --format json 2>/dev/null | python3 -c 
 import sys, json
 data = json.load(sys.stdin)
 for img in data:
-    if img.get('type') == 'container' and img.get('architecture') == 'x86_64':
-        aliases = [a['name'] for a in (img.get('aliases') or [])]
-        if any('22.04' in a for a in aliases):
-            print(img['fingerprint'])
-            break
+    if img.get('type') != 'container' or img.get('architecture') != 'x86_64':
+        continue
+    aliases = [a['name'] for a in (img.get('aliases') or [])]
+    props = img.get('properties') or {}
+    release = props.get('release', '')
+    if release == '22.04' or any('22.04' in a for a in aliases):
+        print(img['fingerprint'])
+        break
 ")
 if [ -n "$CT_FP" ]; then
   echo "   Container fingerprint: $CT_FP"
@@ -236,7 +257,7 @@ if [ -n "$CT_FP" ]; then
     $LXC image copy "ubuntu-releases:$CT_FP" local: --alias ubuntu-22.04-container
   fi
 else
-  echo "   WARNING: No se encontró imagen contenedor Ubuntu 22.04"
+  echo "   WARNING: No se encontró imagen contenedor Ubuntu 22.04 en ubuntu-releases"
 fi
 
 echo "==> Verificando grupo lxd para el usuario $USER"
