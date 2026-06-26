@@ -1,0 +1,13 @@
+[Unit]
+Description=Reap stale LXD lab instances (standalone, no HTTP)
+After=provision.service
+Requires=provision.service
+
+[Service]
+Type=oneshot
+User=provision
+Group=provision
+SupplementaryGroups=lxd
+WorkingDirectory=/opt/provision
+EnvironmentFile=/etc/provision/provision.env
+ExecStart=/opt/provision/.venv/bin/python -m provision.reap

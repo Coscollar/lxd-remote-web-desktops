@@ -1,0 +1,55 @@
+# FASE 4 — Guacamole + guacd + mysql (Opción A: dev/lab).
+# Regla de oro: guacd SIEMPRE intermedio. Nginx enruta a Guacamole (8080),
+# nunca a guacd (4822) ni a las VMs (3389). Los tres servicios en
+# network_mode: host con bind estricto 127.0.0.1; sin `ports:` publicados.
+# Variables desde .env (no commitear .env real).
+
+services:
+  guacd:
+    image: guacd:latest
+    # network_mode: host + bind 127.0.0.1 en guacd (ver guacd.conf) => 4822
+    # solo alcanzable desde localhost.
+    network_mode: host
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    restart: unless-stopped
+    volumes:
+      - ./guacd.conf:/etc/guacd/guacd.conf:ro
+
+  guacamole:
+    image: guacamole:latest
+    depends_on: [guacd, mysql]
+    network_mode: host
+    environment:
+      GUACD_HOSTNAME: 127.0.0.1
+      GUACD_PORT: "4822"
+      MYSQL_DRIVER: mysql
+      MYSQL_HOSTNAME: 127.0.0.1
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: guacamole
+      MYSQL_USER: guacamole
+      MYSQL_PASSWORD: ${GUAC_MYSQL_PASS}
+      # Header Auth Extension (dev): confía en Remote-User de Nginx.
+      # En prod se sustituye por JSON auth (deuda Opción C).
+      HEADER_ENABLED: "true"
+      HEADER_TRUSTED_ORIGINS: "127.0.0.1"
+    restart: unless-stopped
+    volumes:
+      - ./guacamole.properties:/etc/guacamole/guacamole.properties:ro
+
+  mysql:
+    image: mysql:8
+    network_mode: host
+    command:
+      - --bind-address=127.0.0.1
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GUAC_MYSQL_ROOT}
+      MYSQL_DATABASE: guacamole
+      MYSQL_USER: guacamole
+      MYSQL_PASSWORD: ${GUAC_MYSQL_PASS}
+    restart: unless-stopped
+
+volumes:
+  mysql_data:

@@ -1,0 +1,24 @@
+[Unit]
+Description=LXD Lab Provision API
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+Requires=snap.lxd.daemon.service
+
+[Service]
+Type=simple
+User=provision
+Group=provision
+SupplementaryGroups=lxd
+WorkingDirectory=/opt/provision
+EnvironmentFile=/etc/provision/provision.env
+ExecStart=/opt/provision/.venv/bin/uvicorn provision.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/provision
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,146 @@
+#cloud-config
+# Plantilla Jinja2 renderizada por provision-api (FASE 3) al lanzar la VM del alumno.
+# NO commitear el render: se pasa in-memory via stdin a `lxc launch -c user.user-data=-`.
+# Modelo A: sin password RDP conocida (autologin gestionado por lab-vm-base).
+
+users:
+  - name: alumno
+    lock_passwd: true
+{% if SUDO_MODE %}
+    sudo: "{{ SUDO_MODE }}"
+{% endif %}
+    shell: /bin/bash
+{% if SSH_AUTHORIZED_KEYS %}
+    ssh_authorized_keys:
+{% for key in SSH_AUTHORIZED_KEYS %}
+      - {{ key }}
+{% endfor %}
+{% endif %}
+
+hostname: {{ ALUMNO }}-{{ LAB }}
+manage_etc_hosts: true
+fqdn: {{ ALUMNO }}-{{ LAB }}
+
+package_update: true
+# NO package_upgrade: idempotencia (no cambiar versiones en re-aplicacion).
+{% if LAB_PACKAGES %}
+packages:
+{% for pkg in LAB_PACKAGES %}
+  - {{ pkg }}
+{% endfor %}
+{% endif %}
+
+write_files:
+  - path: /usr/local/bin/lab-save
+    permissions: '0755'
+    owner: root:root
+    append: false
+    content: |
+      #!/bin/bash
+      # lab-save: pide al provision-api un snapshot de esta instancia.
+      set -u
+      TOKEN="$(sudo cat /etc/lab/identity 2>/dev/null)"
+      if [ -z "$TOKEN" ]; then
+        echo "Error: no se pudo leer /etc/lab/identity" >&2
+        exit 4
+      fi
+      INSTANCIA="$(hostname -s)"
+      RESP="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+        "{{ PROVISION_URL_VM }}/save" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d "instancia=$INSTANCIA" 2>/dev/null)" || RESP="000"
+      case "$RESP" in
+        200|202) echo "Snapshot guardado correctamente (tag kN)." ;;
+        507)     echo "No se pudo guardar: pool lleno (507)." >&2; exit 2 ;;
+        409)     echo "Conflicto: la instancia no esta lista para snapshot (409)." >&2; exit 3 ;;
+        000)     echo "Error de red al contactar provision-api." >&2; exit 1 ;;
+        *)       echo "Error al guardar (HTTP $RESP)." >&2; exit 1 ;;
+      esac
+      exit 0
+
+  - path: /usr/local/bin/lab-reset
+    permissions: '0755'
+    owner: root:root
+    append: false
+    content: |
+      #!/bin/bash
+      # lab-reset: pide al provision-api restaurar el estado base (snapshot base-tag).
+      set -u
+      if [ "${1:-}" != "--yes" ]; then
+        read -p "Restaurar al estado base? Se perderan los cambios no guardados [y/N] " -n1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+      fi
+      TOKEN="$(sudo cat /etc/lab/identity 2>/dev/null)"
+      if [ -z "$TOKEN" ]; then
+        echo "Error: no se pudo leer /etc/lab/identity" >&2
+        exit 4
+      fi
+      INSTANCIA="$(hostname -s)"
+      RESP="$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+        "{{ PROVISION_URL_VM }}/reset" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d "instancia=$INSTANCIA" 2>/dev/null)" || RESP="000"
+      case "$RESP" in
+        200|202) echo "Reset solicitado. Tu escritorio se reiniciara; vuelve a entrar por el navegador." ;;
+        404)     echo "Error: no existe snapshot base para esta instancia (404)." >&2; exit 2 ;;
+        409)     echo "Conflicto: la instancia no esta lista para reset (409)." >&2; exit 3 ;;
+        000)     echo "Error de red al contactar provision-api." >&2; exit 1 ;;
+        *)       echo "Error al resetear (HTTP $RESP)." >&2; exit 1 ;;
+      esac
+      exit 0
+
+  - path: /usr/local/bin/lab-heartbeat
+    permissions: '0755'
+    owner: root:root
+    append: false
+    content: |
+      #!/bin/bash
+      # lab-heartbeat: senal de vida periodica para policy-engine (last_seen).
+      set -u
+      TOKEN="$(cat /etc/lab/identity 2>/dev/null)"
+      [ -z "$TOKEN" ] && exit 4
+      INSTANCIA="$(hostname -s)"
+      curl -sS -o /dev/null -X POST \
+        "{{ PROVISION_URL_VM }}/heartbeat" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d "instancia=$INSTANCIA" 2>/dev/null || exit 1
+
+  - path: /etc/lab/identity
+    permissions: '0640'
+    owner: root:root
+    append: false
+    content: "{{ LAB_SERVICE_TOKEN }}"
+
+  - path: /etc/systemd/system/lab-heartbeat.timer
+    permissions: '0644'
+    owner: root:root
+    append: false
+    content: |
+      [Unit]
+      Description=Lab heartbeat timer (senal de vida a provision-api)
+      [Timer]
+      OnBootSec=1min
+      OnUnitActiveSec=5min
+      AccuracySec=30s
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/systemd/system/lab-heartbeat.service
+    permissions: '0644'
+    owner: root:root
+    append: false
+    content: |
+      [Unit]
+      Description=Lab heartbeat service
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/lab-heartbeat
+
+# Modelo A: NO chpasswd, NO ssh_pwauth:true, NO final_modules:[].
+# La imagen base lab-vm-base ya trae xrdp + autologin + cloud-init limpio.
+
+runcmd:
+  - [ sh, -c, "set -e; if [ -f /etc/lab/.provisioned ]; then echo '[lab] ya provisionado, runcmd omitido'; exit 0; fi; systemctl daemon-reload; systemctl enable --now xrdp ssh; systemctl enable --now lab-heartbeat.timer; systemctl is-active --quiet xrdp || systemctl restart xrdp; sha256sum /etc/lab/identity > /etc/lab/.provisioned; echo '[lab] provisionado correctamente'" ]
+
+timezone: {{ TIMEZONE }}
