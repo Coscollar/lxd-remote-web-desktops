@@ -12,7 +12,34 @@ https://github.com/Coscollar/lxd-remote-web-desktops.git
 - [`docs/policy.md`](docs/policy.md) — Policy engine: snapshots, reset y auto-destrucción.
 - [`PLAN.md`](PLAN.md) — Plan de implementación (FASES 0–5) y deudas técnicas.
 
-## Instalación
+## Instalación rápida (un comando)
+
+`install-all.sh` es el entrypoint único: desinstala cualquier instalación
+previa, instala dependencias del sistema y ejecuta todas las fases (0→5)
+generando secretos automáticamente.
+
+```bash
+git clone https://github.com/Coscollar/lxd-remote-web-desktops.git
+cd lxd-remote-web-desktops
+sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com
+```
+
+`--domain` y `--email` son obligatorios. Opcionales: `--smtp-user`,
+`--smtp-pass`. El script convierte CRLF→LF internamente. Si el grupo `lxd`
+no está activo, aborta con `exit 100` → re-login y reejecutar.
+
+## Desinstalación
+
+```bash
+sudo bash uninstall-all.sh --domain=lab.example.com           # con confirmación
+sudo bash uninstall-all.sh --yes --domain=lab.example.com    # sin confirmación
+sudo bash uninstall-all.sh --purge-lxd --domain=lab.example.com  # + pools/redes/perfiles
+```
+
+No desinstala paquetes del sistema (nginx, docker, certbot, snap LXD) ni
+el repo en disco.
+
+## Instalación paso a paso (avanzado)
 
 Los scripts se editan desde Windows (CRLF) y abortan si detectan CRLF.
 Convertir a LF antes de ejecutarlos:
@@ -24,8 +51,8 @@ for f in *.sh provision/*.sh guacamole/*.sh nginx/*.sh; do
 done
 ```
 
-Puesta en marcha completa del servidor (orden impuesto, ver
-[`docs/DEPLOY.md`](docs/DEPLOY.md) para el detalle de cada fase):
+Puesta en marcha fase por fase (ver [`docs/DEPLOY.md`](docs/DEPLOY.md)
+para el detalle de cada una):
 
 ```bash
 sudo bash server-setup-lxd.sh          # FASE 0: infra LXD + imagen base VM

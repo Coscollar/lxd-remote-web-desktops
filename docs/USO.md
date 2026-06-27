@@ -100,3 +100,35 @@ sudo bash server-setup-lxd.sh --force-preseed
 
 ⚠️ Machaca toda la config del daemon LXD. Solo para recreación planificada;
 haz snapshot/backup antes.
+
+### Desinstalación completa del proyecto
+
+```bash
+# Con confirmación interactiva:
+sudo bash uninstall-all.sh --domain=lab.<tu-dominio>
+
+# Sin confirmación (automatización):
+sudo bash uninstall-all.sh --yes --domain=lab.<tu-dominio>
+
+# Incluye pools ZFS, redes, perfiles y proyectos LXD (NO desinstala el snap):
+sudo bash uninstall-all.sh --purge-lxd --domain=lab.<tu-dominio>
+```
+
+Elimina: servicios systemd, instancias e imágenes LXD, stack Docker
+Guacamole, site Nginx, reglas iptables, certs certbot, usuario
+`provision` y directorios. **No** desinstala paquetes del sistema ni el
+repo en disco.
+
+### Desinstalar paquetes del sistema (opcional, manual)
+
+`uninstall-all.sh` no toca los paquetes del sistema. Si quieres eliminarlos
+por completo (ej. para reutilizar el host para otra cosa):
+
+```bash
+sudo apt remove --purge nginx certbot docker.io iptables-persistent sqlite3 dos2unix
+sudo apt autoremove --purge
+sudo snap remove lxd          # ⚠️ elimina LXD completamente (incl. daemon)
+```
+
+⚠️ `snap remove lxd` borra el daemon LXD y todo su estado. Solo si no vas
+a volver a usar LXD en el host.

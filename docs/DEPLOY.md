@@ -7,6 +7,37 @@ convertirlos a LF antes de ejecutarlos.
 > Nota: el script de setup en disco se llama `server-setup-lxd.sh` (un
 > comentario interno aún referencia `1-server-setup-lxd.sh`).
 
+## Despliegue en un comando (recomendado)
+
+El entrypoint único es `install-all.sh`: desinstala cualquier instalación
+previa, instala dependencias del sistema, y ejecuta todas las fases
+(0→5) generando secretos automáticamente.
+
+```bash
+git clone https://github.com/Coscollar/lxd-remote-web-desktops.git
+cd lxd-remote-web-desktops
+sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com \
+     [--smtp-user=xxx --smtp-pass=yyy]
+```
+
+- `--domain` y `--email` son **obligatorios**.
+- `--smtp-user` / `--smtp-pass` opcionales (si se omiten, se deja Mailtrap
+  sin credenciales para rellenar a mano en `/etc/provision/provision.env`).
+- Re-ejecutable: siempre hace limpieza previa (`uninstall-all.sh --yes`).
+- Si el grupo `lxd` no está activo en la sesión, aborta con `exit 100` →
+  re-login y reejecutar.
+
+Para **desinstalar todo**:
+
+```bash
+sudo bash uninstall-all.sh --domain=lab.example.com           # con confirmación
+sudo bash uninstall-all.sh --yes --domain=lab.example.com    # sin confirmación
+sudo bash uninstall-all.sh --purge-lxd --domain=lab.example.com  # + pools/redes/perfiles/proyectos
+```
+
+El resto del documento describe el despliegue **paso a paso** (manual),
+útil para diagnóstico o cuando se quiere ejecutar una fase aislada.
+
 ## 0. Pre-requisitos del host
 
 - **Ubuntu Server LTS** (22.04 o 24.04) con acceso root/sudo.
@@ -242,3 +273,22 @@ sudo bash server-setup-lxd.sh --force-preseed
 
 ⚠️ Machaca toda la config del daemon LXD. Solo para recreación planificada;
 haz snapshot/backup antes.
+
+## Desinstalación completa
+
+```bash
+# Con confirmación interactiva:
+sudo bash uninstall-all.sh --domain=lab.example.com
+
+# Sin confirmación (automatización):
+sudo bash uninstall-all.sh --yes --domain=lab.example.com
+
+# Incluye pools ZFS, redes, perfiles y proyectos LXD (NO desinstala el snap):
+sudo bash uninstall-all.sh --purge-lxd --domain=lab.example.com
+```
+
+Elimina: servicios systemd, instancias e imágenes LXD, stack Docker
+Guacamole, site Nginx, reglas iptables, certs certbot, usuario
+`provision` y directorios. **No** desinstala paquetes del sistema (nginx,
+docker, certbot, snap LXD) ni el repo en disco. Ver `docs/USO.md` para
+desinstalar paquetes del sistema manualmente.
