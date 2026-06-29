@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block actions %}
+  <button onclick="fetch('/logout',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(()=>location='/')" class="btn-logout">Cerrar sesión</button>
+{% endblock %}
+{% block content %}
+<div id="dashboard-content">
+  <p>Cargando tus laboratorios...</p>
+</div>
+
+<script>
+async function loadDashboard() {
+  const [labsResp, appsResp] = await Promise.all([
+    fetch('/api/my-labs').then(r => r.json()).catch(() => ({labs: []})),
+    fetch('/apps').then(r => r.json()).catch(() => ({apps: []}))
+  ]);
+  const current = labsResp.current;
+  let html = '<h2>Tus laboratorios</h2><div class="cards">';
+  for (const lab of labsResp.labs) {
+    const active = (lab.lab === current);
+    const estado = lab.estado_instancia;
+    html += `<div class="card ${active ? 'active' : ''}">
+      <h3>${lab.lab}</h3>
+      <p>Estado: ${estado}</p>
+      <button onclick="selectLab('${lab.lab}')" class="btn-primary">Abrir escritorio</button>
+    </div>`;
+  }
+  html += '</div>';
+  if (appsResp.apps.length > 0) {
+    html += '<h2>Apps stateless</h2><div class="cards">';
+    for (const app of appsResp.apps) {
+      const tipo = app.shared ? 'compartida' : 'por alumno';
+      html += `<div class="card">
+        <h3>${app.nombre}</h3>
+        <p>${app.descripcion || ''}</p>
+        <p><small>${tipo}</small></p>
+        <button onclick="openApp('${app.id}')" class="btn-primary">Abrir app</button>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  document.getElementById('dashboard-content').innerHTML = html;
+}
+
+async function selectLab(lab) {
+  const resp = await fetch('/lab/select', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+    body: JSON.stringify({lab})
+  });
+  if (resp.ok) {
+    const data = await resp.json();
+    window.location.href = data.redirect;
+  } else {
+    alert('No se pudo seleccionar el lab');
+  }
+}
+
+async function openApp(appId) {
+  const resp = await fetch(`/apps/${appId}/start`, {method: 'POST'});
+  if (resp.status === 202) {
+    pollApp(appId);
+  } else if (resp.ok) {
+    showApp(appId);
+  }
+}
+
+async function pollApp(appId) {
+  for (let i = 0; i < 30; i++) {
+    const status = await fetch(`/apps/${appId}/status`).then(r => r.json());
+    if (status.estado === 'lista') { showApp(appId); return; }
+    if (status.estado === 'error') { alert('Error al lanzar la app'); return; }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  alert('La app tardó demasiado en arrancar');
+}
+
+function showApp(appId) {
+  const url = `/apps/${appId}/`;
+  const overlay = document.createElement('div');
+  overlay.className = 'app-overlay';
+  overlay.innerHTML = `<div class="app-frame"><button onclick="this.parentElement.parentElement.remove()" class="btn-close">X</button><iframe src="${url}" sandbox="allow-scripts allow-forms" style="width:100%;height:100%;border:0"></iframe></div>`;
+  document.body.appendChild(overlay);
+}
+
+loadDashboard();
+</script>
+{% endblock %}

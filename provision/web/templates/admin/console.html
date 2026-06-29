@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block actions %}
+  <button onclick="fetch('/admin/logout',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(()=>location='/admin/login')" class="btn-logout">Cerrar sesión</button>
+{% endblock %}
+{% block content %}
+<h2>Consola de administración</h2>
+<nav class="admin-nav">
+  <button onclick="loadSection('instances')" class="btn-tab">Instancias</button>
+  <button onclick="loadSection('labs')" class="btn-tab">Labs</button>
+  <button onclick="loadSection('enrollments')" class="btn-tab">Matrículas</button>
+  <button onclick="loadSection('apps')" class="btn-tab">Apps stateless</button>
+</nav>
+<div id="admin-content"><p>Selecciona una sección.</p></div>
+
+<script>
+async function loadSection(section) {
+  const el = document.getElementById('admin-content');
+  if (section === 'instances') {
+    const data = await fetch('/admin/instances?limit=100').then(r => r.json()).catch(() => ({instances: []}));
+    let html = '<table><tr><th>Tipo</th><th>Nombre</th><th>Alumno</th><th>Lab/App</th><th>Estado</th><th>IP</th><th>Acciones</th></tr>';
+    for (const i of data.instances) {
+      html += `<tr><td>${i.tipo}</td><td>${i.nombre}</td><td>${i.alumno||'-'}</td><td>${i.lab}</td><td>${i.estado}</td><td>${i.ip||'-'}</td>
+        <td><button onclick="destroyInst('${i.nombre}','${i.tipo}')" class="btn-danger">Destruir</button></td></tr>`;
+    }
+    html += '</table>';
+    el.innerHTML = html;
+  } else if (section === 'apps') {
+    const data = await fetch('/admin/apps').then(r => r.json()).catch(() => ({apps: []}));
+    let html = '<table><tr><th>ID</th><th>Nombre</th><th>Shared</th><th>AlwaysOn</th><th>Puerto</th><th>Activo</th></tr>';
+    for (const a of data.apps) {
+      html += `<tr><td>${a.id}</td><td>${a.nombre}</td><td>${a.shared}</td><td>${a.always_on}</td><td>${a.puerto_http}</td><td>${a.activo}</td></tr>`;
+    }
+    html += '</table>';
+    el.innerHTML = html;
+  } else {
+    el.innerHTML = '<p>Sección ' + section + ' (pendiente de UI).</p>';
+  }
+}
+
+async function destroyInst(nombre, tipo) {
+  if (!confirm('¿Destruir ' + nombre + '?')) return;
+  await fetch(`/admin/instances/${nombre}/destroy?tipo=${tipo}`, {method: 'POST'});
+  loadSection('instances');
+}
+</script>
+{% endblock %}

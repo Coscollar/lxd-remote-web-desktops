@@ -67,7 +67,8 @@ echo "==> Iniciando desinstalación..."
 
 # 1. Servicios systemd
 echo "--- 1. Servicios systemd ---"
-for svc in provision.service provision-reap.service provision-reap.timer; do
+for svc in provision.service provision-reap.service provision-reap.timer \
+           provision-reap-apps.service provision-reap-apps.timer; do
   systemctl stop "$svc" 2>/dev/null || true
   systemctl disable "$svc" 2>/dev/null || true
   rm -f "/etc/systemd/system/$svc"
@@ -187,6 +188,17 @@ iptables -S OUTPUT 2>/dev/null | grep '10.50.20.0/24.*3389' | while read -r rule
   # shellcheck disable=SC2086
   iptables $del_rule 2>/dev/null || true
 done
+# FASE 6: borrar reglas iptables-apps (lab-stateless)
+while iptables -D FORWARD -i lab-stateless -o lab-stateless -j DROP 2>/dev/null; do :; done
+while iptables -D FORWARD -i lab-stateless -o lab-persistent -j DROP 2>/dev/null; do :; done
+while iptables -D FORWARD -i lab-persistent -o lab-stateless -j DROP 2>/dev/null; do :; done
+while iptables -D FORWARD -s 10.50.10.1 -d 10.50.10.0/23 -p tcp --dport 3000:9999 -j ACCEPT 2>/dev/null; do :; done
+while iptables -D FORWARD -s 10.50.10.0/23 -d 10.50.10.1 -p tcp --dport 8000 -j ACCEPT 2>/dev/null; do :; done
+# FASE 6.0: borrar allowlist 8000
+while iptables -D INPUT -p tcp --dport 8000 -s 127.0.0.1 -j ACCEPT 2>/dev/null; do :; done
+while iptables -D INPUT -p tcp --dport 8000 -s 10.50.10.0/23 -j ACCEPT 2>/dev/null; do :; done
+while iptables -D INPUT -p tcp --dport 8000 -s 10.50.20.0/24 -j ACCEPT 2>/dev/null; do :; done
+while iptables -D INPUT -p tcp --dport 8000 -j DROP 2>/dev/null; do :; done
 netfilter-persistent save 2>/dev/null || true
 echo "OK"
 
@@ -220,7 +232,7 @@ echo "============================================================"
 echo "  DESINSTALACIÓN COMPLETADA"
 echo "============================================================"
 echo "Eliminado:"
-echo "  ✓ Servicios systemd (provision, provision-reap)"
+echo "  ✓ Servicios systemd (provision, provision-reap, provision-reap-apps)"
 echo "  ✓ Instancias e imágenes LXD (proyecto labs)"
 if [ "$PURGE_LXD" = "true" ]; then
   echo "  ✓ Pools, redes, perfiles, proyectos LXD (--purge-lxd)"

@@ -54,6 +54,18 @@ def enqueue_launch(alumno: str, lab: str, **extra) -> int:
     return cur.lastrowid
 
 
+def enqueue_launch_app(app_id: str, alumno: Optional[str], nombre_lxd: str, **extra) -> int:
+    """FASE 6.4: Encola un job `launch_app`. Devuelve el id del job."""
+    payload = json.dumps({"app_id": app_id, "alumno": alumno, "nombre_lxd": nombre_lxd, **extra})
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO jobs(tipo, payload, estado) VALUES ('launch_app', ?, 'pending')",
+        (payload,),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
 class JobWorker:
     """Worker único (uvicorn --workers 1). Reclama y ejecuta jobs pendientes."""
 
@@ -143,6 +155,8 @@ class JobWorker:
     async def _run(self, job: sqlite3.Row) -> None:
         if job["tipo"] == "launch":
             await self._run_launch(job)
+        elif job["tipo"] == "launch_app":
+            await self._run_launch_app(job)
         else:
             self._mark_error(job["id"], f"tipo no soportado por el worker: {job['tipo']}")
 
@@ -186,6 +200,60 @@ class JobWorker:
                 conn.execute(
                     "UPDATE instancias SET estado='error' WHERE nombre=?",
                     (instancia,),
+                )
+            self._mark_error(jid, str(e))
+
+    async def _run_launch_app(self, job: sqlite3.Row) -> None:
+        """FASE 6.4: Lanza un contenedor de app stateless."""
+        jid = job["id"]
+        payload = json.loads(job["payload"] or "{}")
+        app_id = payload["app_id"]
+        alumno = payload.get("alumno")
+        nombre_lxd = payload["nombre_lxd"]
+        try:
+            # Pool guard stateless
+            from .policy import stateless_pool_usage_ok
+            if not stateless_pool_usage_ok():
+                raise RuntimeError("stateless-pool > 90%")
+            # Datos de la app
+            app = get_db().execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone()
+            if app is None:
+                raise RuntimeError(f"app {app_id} no encontrada")
+            # Precheck imagen
+            rc, _, _ = await instances.lxc("image", "show", app["imagen"])
+            if rc != 0:
+                raise RuntimeError(f"imagen {app['imagen']} no encontrada")
+            # Lanzar contenedor
+            await instances.launch_container(
+                nombre_lxd, app["imagen"],
+                cpu=app["cpu"], mem_mb=app["memory_mb"],
+                boot_autostart=bool(app["always_on"]),
+            )
+            # Healthcheck HTTP
+            await instances.healthcheck_http(nombre_lxd, app["puerto_http"])
+            ip = await instances.get_ip(nombre_lxd)
+            # Issue app service token
+            from .auth import issue_vm_token
+            issue_vm_token(instancia=nombre_lxd, vm_ip=ip, settings=self.settings)
+            with tx() as conn:
+                conn.execute(
+                    """UPDATE app_instances SET estado='lista', ip=?, last_seen=datetime('now')
+                       WHERE nombre_lxd=?""",
+                    (ip, nombre_lxd),
+                )
+            self._mark_done(jid)
+            log.info("launch_app OK %s ip=%s", nombre_lxd, ip)
+        except Exception as e:
+            log.exception("launch_app falló %s", nombre_lxd)
+            # Cleanup: delete instancia huérfana
+            try:
+                await instances.delete(nombre_lxd)
+            except Exception:
+                pass
+            with tx() as conn:
+                conn.execute(
+                    "UPDATE app_instances SET estado='error' WHERE nombre_lxd=?",
+                    (nombre_lxd,),
                 )
             self._mark_error(jid, str(e))
 

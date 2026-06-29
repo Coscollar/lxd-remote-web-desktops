@@ -70,7 +70,7 @@ echo "============================================================"
 echo "==> 0. Conversión CRLF → LF"
 apt-get update -qq
 apt-get install -y -qq dos2unix >/dev/null 2>&1
-for f in *.sh provision/*.sh guacamole/*.sh nginx/*.sh; do
+for f in *.sh provision/*.sh guacamole/*.sh nginx/*.sh build-apps/*.sh; do
   [ -f "$f" ] && dos2unix "$f" 2>/dev/null || true
 done
 echo "OK"
@@ -164,6 +164,31 @@ lxc image show lab-vm-base --project labs >/dev/null 2>&1 || {
 echo "OK: lab-vm-base publicada en labs"
 
 # ---------------------------------------------------------------------------
+# 3b. FASE 6.3 — Ampliar stateless-pool y subred lab-stateless
+# ---------------------------------------------------------------------------
+echo "==> 3b. FASE 6.3 — Ampliar stateless-pool (80GB) y lab-stateless (/23)"
+lxc storage set stateless-pool size=80GB 2>/dev/null \
+  && echo "OK: stateless-pool ampliado a 80GB" \
+  || echo "  (stateless-pool ya en 80GB o no se pudo ampliar)"
+lxc network set lab-stateless ipv4.address=10.50.10.1/23 --project labs 2>/dev/null || true
+lxc network set lab-stateless ipv4.address=10.50.10.1/23 --project default 2>/dev/null || true
+echo "OK: lab-stateless /23"
+
+# ---------------------------------------------------------------------------
+# 3c. FASE 6.3 — Builders de apps stateless
+# ---------------------------------------------------------------------------
+echo "==> 3c. FASE 6.3 — Builders de apps stateless"
+for app_script in "$SCRIPT_DIR"/build-apps/build-app-*.sh; do
+  [ -f "$app_script" ] || continue
+  set +e; bash "$app_script"; rc=$?; set -e
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 10 ]; then
+    echo "ERROR: $app_script falló (rc=$rc)" >&2; exit "$rc"
+  fi
+  [ "$rc" -eq 10 ] && echo "  (app ya existía — SKIP)"
+done
+echo "OK: imágenes de apps construidas"
+
+# ---------------------------------------------------------------------------
 # 4. FASE 1-3 — provision-api (auth + cloud-init + provisión on-demand)
 # ---------------------------------------------------------------------------
 echo "==> 4. FASE 1-3 — provision-api"
@@ -176,6 +201,10 @@ JWT_SECRET="$(openssl rand -hex 32)"
 JWT_SECRET_PREV="$(openssl rand -hex 32)"
 SERVICE_JWT_SECRET="$(openssl rand -hex 32)"
 ADMIN_TOKEN="$(openssl rand -hex 32)"
+INTERNAL_TOKEN="$(openssl rand -hex 32)"
+ADMIN_JWT_SECRET="$(openssl rand -hex 32)"
+ADMIN_JWT_SECRET_PREV="$(openssl rand -hex 32)"
+ADMIN_TOTP_KEY="$(openssl rand -hex 32)"
 
 ENV_FILE="/etc/provision/provision.env"
 cat > "$ENV_FILE" <<EOF
@@ -198,13 +227,27 @@ JWT_AUD=lab-gateway
 SERVICE_JWT_SECRET=${SERVICE_JWT_SECRET}
 SERVICE_JWT_TTL=86400
 
-# Admin token (para /admin/*)
+# Admin token (para /admin/* automatización)
 ADMIN_TOKEN=${ADMIN_TOKEN}
+
+# FASE 6: header secreto compartido Nginx→provision-api
+INTERNAL_TOKEN=${INTERNAL_TOKEN}
+
+# FASE 6: JWT admin (secreto separado del navegador)
+ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET}
+ADMIN_JWT_SECRET_PREV=${ADMIN_JWT_SECRET_PREV}
+ADMIN_JWT_TTL=1800
+ADMIN_JWT_AUD=lab-admin
+ADMIN_MAGIC_LINK_TTL=300
+ADMIN_TOTP_REQUIRED=0
+ADMIN_TOTP_KEY=${ADMIN_TOTP_KEY}
+ADMIN_IP_BINDING=0
 
 # Dominio público y URLs internas
 PUBLIC_DOMAIN=${DOMAIN}
 PROVISION_URL=http://127.0.0.1:8000
 PROVISION_URL_VM=http://10.50.20.1:8000
+PROVISION_URL_APP=http://10.50.10.1:8000
 
 # Magic link
 MAGIC_LINK_TTL=900
@@ -223,6 +266,15 @@ IDLE_MINUTES=60
 COURSE_DEADLINE=
 KEEP_SNAPSHOTS=5
 CREATING_TIMEOUT=600
+
+# FASE 6: Apps stateless
+APP_IDLE_MINUTES=30
+SHARED_IDLE_HOURS=6
+APP_CREATING_TIMEOUT=300
+GRACE_AFTER_RESTART=900
+MAX_APP_INSTANCES=40
+ALWAYS_ON_BUDGET_MB=8192
+APP_LAUNCH_SEM=6
 EOF
 chmod 0640 "$ENV_FILE"
 chown root:provision "$ENV_FILE"
@@ -259,7 +311,11 @@ echo "OK: Nginx + certbot configurados"
 
 # 5.3 iptables (aislamiento inter-VM)
 bash "$SCRIPT_DIR/nginx/iptables-lab.sh"
-echo "OK: iptables configuradas"
+echo "OK: iptables VMs configuradas"
+
+# 5.4 FASE 6.3: iptables apps stateless
+bash "$SCRIPT_DIR/nginx/iptables-apps.sh"
+echo "OK: iptables apps configuradas"
 
 # ---------------------------------------------------------------------------
 # 6. FASE 5 — Policy engine (ya integrado en provision-api + systemd timer)
@@ -291,7 +347,9 @@ echo "URL de acceso: https://$DOMAIN"
 echo ""
 echo "Secretos generados (guárdalos en un sitio seguro):"
 echo "  ADMIN_TOKEN        : $ADMIN_TOKEN"
+echo "  INTERNAL_TOKEN     : $INTERNAL_TOKEN"
 echo "  JWT_SECRET         : $JWT_SECRET"
+echo "  ADMIN_JWT_SECRET   : $ADMIN_JWT_SECRET"
 echo "  (demás secretos en /etc/provision/provision.env)"
 echo ""
 if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then

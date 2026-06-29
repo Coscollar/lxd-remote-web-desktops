@@ -10,6 +10,7 @@ llegar a `lxc`, de modo que un valor malicioso nunca alcance el shell.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from pathlib import Path
 from typing import Optional
@@ -24,8 +25,11 @@ PROFILE = "persistent"
 BASE_IMAGE = "local:lab-vm-base"
 
 # Whitelist estricta: un valor que no cashe NUNCA llega a `lxc`.
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
+# FASE 6: NAME_RE de alumnos/labs PROHÍBE el prefijo `app-` (namespace de apps).
+NAME_RE = re.compile(r"^(?!app-)[a-z0-9][a-z0-9-]{1,30}$")
 TAG_RE = re.compile(r"^(base|k[1-5])$")
+# FASE 6: apps usan prefijo `app-` obligatorio.
+APP_NAME_RE = re.compile(r"^app-[a-z0-9][a-z0-9-]{1,30}$")
 
 # Valores sudoers literales permitidos (coherente con cloud-init-template.yml)
 _VALID_SUDO = {
@@ -306,3 +310,96 @@ def render_cloud_init(
     # Validar que el resultado es YAML parseable antes de lanzar la VM.
     yaml.safe_load(rendered)
     return rendered.encode("utf-8")
+
+
+# --- FASE 6.3: Apps stateless (contenedores LXD, perfil stateless) --------
+def app_instancia_nombre(app_id: str, alumno: Optional[str]) -> str:
+    """Devuelve 'app-<id>' (shared) o 'app-<id>-<alumno>' (per-alumno).
+
+    Si len > 30, sustituye <alumno> por sha8(alumno).
+    """
+    _check_name(app_id)
+    if alumno is None:
+        name = f"app-{app_id}"
+    else:
+        _check_name(alumno)
+        full = f"app-{app_id}-{alumno}"
+        if len(full) <= 30:
+            name = full
+        else:
+            suffix = hashlib.sha256(alumno.encode()).hexdigest()[:8]
+            name = f"app-{app_id}-{suffix}"
+    if not APP_NAME_RE.match(name):
+        raise ValueError(f"nombre de app inválido: {name!r}")
+    return name
+
+
+async def launch_container(
+    instancia: str,
+    image: str,
+    *,
+    cpu: Optional[int] = None,
+    mem_mb: Optional[int] = None,
+    user_data: Optional[bytes] = None,
+    boot_autostart: bool = False,
+    timeout: float = 120,
+) -> None:
+    """Lanza un contenedor LXD (NO VM) con perfil stateless. Sin --vm.
+
+    FASE 6.3: separada de launch() (que tiene --vm hardcoded).
+    """
+    if not APP_NAME_RE.match(instancia):
+        raise ValueError(f"nombre de app inválido: {instancia!r}")
+    args = ["launch", image, instancia, "-p", "stateless"]
+    if boot_autostart:
+        args += ["-c", "boot.autostart=true"]
+    if cpu is not None:
+        args += ["-c", f"limits.cpu={cpu}"]
+    if mem_mb is not None:
+        args += ["-c", f"limits.memory={mem_mb}MB"]
+    if user_data is not None:
+        args += ["-c", "user.user-data=-"]
+        rc, _, err = await _lxc_stdin(*args, stdin_data=user_data, timeout=timeout)
+    else:
+        rc, _, err = await lxc(*args, timeout=timeout)
+    _raise(rc, err, "lxc launch container")
+
+
+async def healthcheck_http(
+    instancia: str, port: int, retries: int = 30, delay: float = 2.0
+) -> None:
+    """Healthcheck HTTP real (no solo TCP). Reusa _probe_tcp + valida HTTP.
+
+    FASE 6.3: probe TCP al puerto de la app con retries. Tolera IP transitoria.
+    """
+    if not APP_NAME_RE.match(instancia):
+        raise ValueError(f"nombre de app inválido: {instancia!r}")
+    for _ in range(retries):
+        try:
+            ip = await get_ip(instancia)
+            if await _probe_tcp(ip, port):
+                return
+        except (RuntimeError, OSError, asyncio.TimeoutError):
+            pass  # transitorio: reintentar
+        await asyncio.sleep(delay)
+    raise RuntimeError(f"app {instancia} no responde en :{port} tras {retries} intentos")
+
+
+async def wait_cloud_init_app(instancia: str, timeout: int = 120) -> None:
+    """Espera cloud-init en contenedor de app (si la app usa cloud-init mínimo)."""
+    if not APP_NAME_RE.match(instancia):
+        raise ValueError(f"nombre de app inválido: {instancia!r}")
+    rc, _, err = await lxc(
+        "exec", instancia, "--", "timeout", str(timeout),
+        "cloud-init", "status", "--wait",
+        timeout=timeout + 30,
+    )
+    if rc != 0:
+        _, out2, _ = await lxc("exec", instancia, "--", "cloud-init", "status", "--long")
+        raise RuntimeError(
+            f"cloud-init status --wait falló en app: {err.decode(errors='replace').strip()}\n"
+            f"{out2.decode(errors='replace')}"
+        )
+    _, out2, _ = await lxc("exec", instancia, "--", "cloud-init", "status", "--long")
+    if "status: done" not in out2.decode("replace"):
+        raise RuntimeError(f"cloud-init no terminó en done en app: {out2.decode(errors='replace').strip()}")

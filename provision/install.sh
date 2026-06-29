@@ -51,12 +51,14 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # 6. systemd units
-for unit in provision.service provision-reap.service provision-reap.timer; do
+for unit in provision.service provision-reap.service provision-reap.timer \
+            provision-reap-apps.service provision-reap-apps.timer; do
   install -m 0644 "$SCRIPT_DIR/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 systemctl enable --now provision.service
 systemctl enable --now provision-reap.timer
+systemctl enable --now provision-reap-apps.timer
 
 echo ">> Instalación completa."
 echo "   systemctl status provision"

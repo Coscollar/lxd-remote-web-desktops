@@ -27,11 +27,16 @@ from fastapi import HTTPException
 from . import instances
 
 POOL = "persistent-pool"
+POOL_STATELESS = "stateless-pool"
 KEEP_DEFAULT = 5
 KEEP_LOW = 3            # retención reducida si pool > 60%
 THRESHOLD_LOW = 60.0    # >60%  -> KEEP=3
 THRESHOLD_PURGE = 75.0  # >75%  -> purgar oldest antes de crear
 THRESHOLD_FULL = 90.0   # >90%  -> 503
+
+# Cache de pool usage (30s) para evitar 503 global por fallo transitorio.
+_pool_cache: dict[str, tuple[float, float]] = {}  # pool -> (timestamp, pct)
+_POOL_CACHE_TTL = 30.0
 
 # Locks por instancia para serializar snapshot_save (evita TOCTOU en rotación FIFO)
 _inst_locks: dict[str, asyncio.Lock] = {}
@@ -46,16 +51,16 @@ def _lock_for(instancia: str) -> asyncio.Lock:
 
 
 # --- pool guard -------------------------------------------------------------
-def _pool_usage_pct_sync() -> float:
-    """% usado de persistent-pool (síncrono, para run_in_threadpool)."""
+def _pool_usage_pct_sync(pool_name: str = POOL) -> float:
+    """% usado de un pool ZFS (síncrono, para run_in_threadpool)."""
     proc = subprocess.run(
-        ["lxc", "storage", "info", POOL, "--format", "json"],
+        ["lxc", "storage", "info", pool_name, "--format", "json"],
         capture_output=True,
         timeout=15,
     )
     if proc.returncode != 0:
         raise RuntimeError(
-            f"lxc storage info {POOL} falló (rc={proc.returncode}): "
+            f"lxc storage info {pool_name} falló (rc={proc.returncode}): "
             f"{proc.stderr.decode(errors='replace').strip()}"
         )
     data = json.loads(proc.stdout)
@@ -67,22 +72,40 @@ def _pool_usage_pct_sync() -> float:
     return used / total * 100.0
 
 
-async def pool_usage_pct() -> float:
-    """% usado de persistent-pool (async, no bloquea el event loop)."""
-    return await asyncio.to_thread(_pool_usage_pct_sync)
+def _pool_usage_pct_cached(pool_name: str = POOL) -> float:
+    """% usado con cache 30s (evita 503 global por fallo transitorio)."""
+    import time as _t
+    now = _t.time()
+    cached = _pool_cache.get(pool_name)
+    try:
+        pct = _pool_usage_pct_sync(pool_name)
+        _pool_cache[pool_name] = (now, pct)
+        return pct
+    except RuntimeError:
+        if cached and (now - cached[0]) < _POOL_CACHE_TTL:
+            return cached[1]
+        raise
 
 
-def pool_usage_ok() -> bool:
-    """True si el pool admite más snapshots (< 90%).
+async def pool_usage_pct(pool: str = POOL) -> float:
+    """% usado de un pool (async, no bloquea el event loop)."""
+    return await asyncio.to_thread(_pool_usage_pct_cached, pool)
 
-    Fail-closed: si no podemos leer el pool, devolvemos False para no crear
-    snapshots sobre un pool posiblemente lleno. Síncrono (uso desde jobs.py
-    pre-launch, que ya corre en threadpool del worker).
+
+def pool_usage_ok(pool: str = POOL) -> bool:
+    """True si el pool admite más operaciones (< 90%).
+
+    Fail-closed: si no podemos leer el pool, devolvemos False. Síncrono.
     """
     try:
-        return _pool_usage_pct_sync() < THRESHOLD_FULL
+        return _pool_usage_pct_cached(pool) < THRESHOLD_FULL
     except RuntimeError:
         return False
+
+
+def stateless_pool_usage_ok() -> bool:
+    """FASE 6.4: True si stateless-pool admite más apps (< 90%). Fail-closed."""
+    return pool_usage_ok(POOL_STATELESS)
 
 
 # --- helpers ----------------------------------------------------------------

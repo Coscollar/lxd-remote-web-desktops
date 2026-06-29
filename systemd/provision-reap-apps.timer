@@ -1,0 +1,11 @@
+[Unit]
+Description=Reap stale LXD lab apps timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

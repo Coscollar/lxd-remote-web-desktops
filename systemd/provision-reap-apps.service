@@ -1,0 +1,10 @@
+[Unit]
+Description=Reap stale LXD lab apps (standalone)
+After=provision.service
+
+[Service]
+Type=oneshot
+User=provision
+Group=provision
+EnvironmentFile=/etc/provision/provision.env
+ExecStart=/opt/provision/.venv/bin/python -m provision.reap
