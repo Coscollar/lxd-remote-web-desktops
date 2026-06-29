@@ -21,6 +21,8 @@ _REQUIRED = (
     "PUBLIC_DOMAIN",
     "PROVISION_URL",
     "PROVISION_URL_VM",
+    "ADMIN_TOKEN",
+    "INTERNAL_TOKEN",
 )
 
 
@@ -62,6 +64,28 @@ class Settings:
     # --- DB ---
     db_path: str
 
+    # --- FASE 6: Admin + defensa en profundidad ---
+    admin_token: str            # automatización API (curl/systemd)
+    internal_token: str          # header secreto compartido Nginx→provision-api
+    admin_jwt_secret: str        # JWT admin (separado del navegador)
+    admin_jwt_secret_prev: str   # rotación admin
+    admin_jwt_ttl: int           # 1800 (30min) sin sliding
+    admin_jwt_aud: str           # lab-admin
+    admin_magic_link_ttl: int    # 300 (5min)
+    admin_totp_required: bool
+    admin_totp_key: str          # clave Fernet para cifrar totp_secret en reposo
+    admin_ip_binding: bool
+
+    # --- FASE 6: Apps stateless ---
+    app_idle_minutes: int
+    shared_idle_hours: int
+    app_creating_timeout: int
+    grace_after_restart: int
+    max_app_instances: int
+    always_on_budget_mb: int
+    app_launch_sem: int
+    provision_url_app: str       # URL que usan las apps para heartbeat
+
     @classmethod
     def from_env(cls) -> "Settings":
         missing = [k for k in _REQUIRED if not os.getenv(k)]
@@ -74,13 +98,17 @@ class Settings:
         jwt_secret = os.environ["JWT_SECRET"]
         jwt_secret_prev = os.environ["JWT_SECRET_PREV"]
         service_jwt_secret = os.environ["SERVICE_JWT_SECRET"]
+        admin_token = os.environ["ADMIN_TOKEN"]
+        internal_token = os.environ["INTERNAL_TOKEN"]
         for name, val in (
             ("JWT_SECRET", jwt_secret),
             ("SERVICE_JWT_SECRET", service_jwt_secret),
+            ("ADMIN_TOKEN", admin_token),
+            ("INTERNAL_TOKEN", internal_token),
         ):
             if len(val) < 32:
                 raise RuntimeError(
-                    f"{name} debe tener >=32 bytes para HS256 (recibido {len(val)})"
+                    f"{name} debe tener >=32 bytes (recibido {len(val)})"
                 )
         if jwt_secret_prev and len(jwt_secret_prev) < 32:
             raise RuntimeError("JWT_SECRET_PREV (si se define) debe tener >=32 bytes")
@@ -116,6 +144,24 @@ class Settings:
             rl_per_email=os.getenv("RL_PER_EMAIL", "3/10minutes"),
             rl_global=os.getenv("RL_GLOBAL", "60/minute"),
             db_path=os.getenv("DB_PATH", "provision.db"),
+            admin_token=admin_token,
+            internal_token=internal_token,
+            admin_jwt_secret=os.getenv("ADMIN_JWT_SECRET", ""),
+            admin_jwt_secret_prev=os.getenv("ADMIN_JWT_SECRET_PREV", ""),
+            admin_jwt_ttl=int(os.getenv("ADMIN_JWT_TTL", "1800")),
+            admin_jwt_aud=os.getenv("ADMIN_JWT_AUD", "lab-admin"),
+            admin_magic_link_ttl=int(os.getenv("ADMIN_MAGIC_LINK_TTL", "300")),
+            admin_totp_required=os.getenv("ADMIN_TOTP_REQUIRED", "0") == "1",
+            admin_totp_key=os.getenv("ADMIN_TOTP_KEY", ""),
+            admin_ip_binding=os.getenv("ADMIN_IP_BINDING", "0") == "1",
+            app_idle_minutes=int(os.getenv("APP_IDLE_MINUTES", "30")),
+            shared_idle_hours=int(os.getenv("SHARED_IDLE_HOURS", "6")),
+            app_creating_timeout=int(os.getenv("APP_CREATING_TIMEOUT", "300")),
+            grace_after_restart=int(os.getenv("GRACE_AFTER_RESTART", "900")),
+            max_app_instances=int(os.getenv("MAX_APP_INSTANCES", "40")),
+            always_on_budget_mb=int(os.getenv("ALWAYS_ON_BUDGET_MB", "8192")),
+            app_launch_sem=int(os.getenv("APP_LAUNCH_SEM", "6")),
+            provision_url_app=os.getenv("PROVISION_URL_APP", "http://10.50.10.1:8000"),
         )
 
 

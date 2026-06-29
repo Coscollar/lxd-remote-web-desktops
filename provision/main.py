@@ -1,16 +1,18 @@
-"""provision-api: FastAPI app + lifespan + routers de FASE 3.
+"""provision-api: FastAPI app + lifespan + routers de FASE 3 + FASE 6.
 
 CORS deshabilitado: Nginx es el único cliente HTTP del navegador (auth_request
-y proxy). Las VMs llaman directo a PROVISION_URL_VM (red lab-persistent) con
-su service token; esas llamadas NO pasan por Nginx.
+y proxy). Las VMs/apps llaman directo a PROVISION_URL_VM/PROVISION_URL_APP
+(red lab-persistent/lab-stateless) con su service token; esas llamadas NO
+pasan por Nginx.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -19,6 +21,8 @@ from slowapi.middleware import SlowAPIMiddleware
 from . import instances
 from .auth import (
     get_current_alumno,
+    get_current_alumno_lab,
+    is_admin,
     issue_vm_token,
     limiter,
     router as auth_router,
@@ -28,10 +32,34 @@ from .config import Settings, get_settings
 from .db import get_db, init_db, tx
 from .jobs import JobWorker, enqueue_launch
 from .policy import reset_to_base, restore_tag, snapshot_save
+from .apps import router as apps_router
+from .web import router as web_router
 
 log = logging.getLogger("provision")
 
 router = APIRouter()
+
+# --- FASE 6.0: headers forjados que el cliente NO puede inyectar ----------
+# Nginx los sobreescribe desde $upstream_http_*; el backend los ignora siempre
+# al entrypoint y los reinyecta solo internamente desde /verify*.
+_FORGED_HEADERS = (
+    "x-lab-role", "x-admin-email", "x-lab-alumno", "x-lab-name",
+    "x-lab-scope", "x-app-target",
+)
+
+# Rutas de navegador: solo accesibles desde 127.0.0.1 (Nginx).
+# Las VMs/apps (10.50.10.0/23, 10.50.20.0/24) solo pueden llamar a rutas de
+# service token (/heartbeat, /save, /reset, /restore, /snapshots).
+_BROWSER_PREFIXES = (
+    "/auth", "/lab", "/admin", "/verify", "/api", "/dashboard",
+    "/apps", "/logout", "/lab/select",
+)
+_VM_ALLOWED_PREFIXES = (
+    "/heartbeat", "/save", "/reset", "/restore", "/snapshots", "/healthz",
+    "/metrics",
+)
+_LAB_STATELESS = ipaddress.ip_network("10.50.10.0/23")
+_LAB_PERSISTENT = ipaddress.ip_network("10.50.20.0/24")
 
 
 # --- lifespan ---------------------------------------------------------------
@@ -58,6 +86,48 @@ async def reconcile_dry_run() -> None:
     conn.commit()
 
 
+async def reconcile_apps_dry_run() -> None:
+    """FASE 6.4: Reconcilia app_instances vs LXD. Dry-run (no delete ciego).
+
+    - per-alumno ausente en LXD, estado IN (lista,detenida) → destruida.
+    - shared always_on=0 ausente → destruida.
+    - shared always_on=1 ausente → encolar job (auto-heal asíncrono).
+    - creando huérfana (worker_heartbeat viejo) → error.
+    """
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT ai.nombre_lxd, ai.estado, ai.app_id, ai.alumno, ai.worker_heartbeat,
+                  a.shared, a.always_on
+             FROM app_instances ai
+             JOIN apps a ON a.id = ai.app_id
+            WHERE ai.estado != 'destruida'"""
+    ).fetchall()
+    for r in rows:
+        if not await instances.exists(r["nombre_lxd"]):
+            if r["estado"] == "creando":
+                conn.execute(
+                    "UPDATE app_instances SET estado='error' WHERE nombre_lxd=? AND estado='creando'",
+                    (r["nombre_lxd"],),
+                )
+                log.warning("orphan app: %s creando huérfana → error", r["nombre_lxd"])
+            elif r["shared"] and r["always_on"]:
+                # Auto-heal: encolar job (asíncrono, no bloquea arranque)
+                conn.execute(
+                    "UPDATE app_instances SET estado='creando' WHERE nombre_lxd=?",
+                    (r["nombre_lxd"],),
+                )
+                from .jobs import enqueue_launch_app
+                enqueue_launch_app(r["app_id"], None, r["nombre_lxd"])
+                log.info("auto-heal: %s shared always_on=1 relanzada", r["nombre_lxd"])
+            else:
+                conn.execute(
+                    "UPDATE app_instances SET estado='destruida' WHERE nombre_lxd=?",
+                    (r["nombre_lxd"],),
+                )
+                log.info("orphan app: %s → destruida", r["nombre_lxd"])
+    conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -67,18 +137,65 @@ async def lifespan(app: FastAPI):
     worker = JobWorker(settings)
     app.state.worker = worker
     await worker.start()
+    # FASE 6.4: reconcile apps asíncrono (no bloquea arranque)
+    import asyncio as _aio
+    _aio.create_task(reconcile_apps_dry_run())
     yield
     await worker.stop()
 
 
-app = FastAPI(title="provision-api", version="0.3.0", lifespan=lifespan)
+app = FastAPI(
+    title="provision-api", version="0.4.0", lifespan=lifespan,
+    docs_url=None, redoc_url=None, openapi_url=None,
+)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+
+@app.middleware("http")
+async def f6_hardening_middleware(request: Request, call_next):
+    """FASE 6.0: borra headers forjados del cliente + aísla rutas navegador
+    de las redes internas (VMs/apps solo pueden llamar a rutas de service
+    token).
+    """
+    # 1. Borrar headers forjados que el cliente podría inyectar (defensa en
+    #    profundidad: los endpoints además no los leen de la request).
+    forged_lower = {h.encode() for h in _FORGED_HEADERS}
+    scope = request.scope
+    scope["headers"] = [
+        (k, v) for (k, v) in scope.get("headers", []) if k not in forged_lower
+    ]
+
+    # 2. Aislamiento por red: VMs/apps no pueden llamar a rutas de navegador.
+    peer = request.client.host if request.client else ""
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        peer_ip = None
+    from_internal = (
+        peer_ip is not None
+        and (peer_ip in _LAB_STATELESS or peer_ip in _LAB_PERSISTENT)
+    )
+    path = request.url.path
+    if from_internal and not any(path.startswith(p) for p in _VM_ALLOWED_PREFIXES):
+        return JSONResponse({"detail": "forbidden from internal network"}, status_code=403)
+
+    return await call_next(request)
+
+
 app.include_router(auth_router)
 app.include_router(router)
+app.include_router(apps_router)
+app.include_router(web_router)
+
+# FASE 6.2: servir estáticos desde provision/web/static/
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path as _Path
+_static_dir = _Path(__file__).resolve().parent / "web" / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 @app.get("/healthz")
@@ -100,16 +217,8 @@ def _vm_remote_ip(request: Request) -> str:
 
 
 def _admin_ok(request: Request, settings: Settings) -> bool:
-    """Admin vía X-Admin-Token (ADMIN_TOKEN en env). Comparación constante-tiempo.
-
-    No basta con 127.0.0.1: Nginx proxya todo el tráfico al backend como
-    127.0.0.1, así que cualquier alumno autenticado llegaría como localhost.
-    Se exige token admin siempre.
-    """
-    import secrets as _s
-    tok = request.headers.get("x-admin-token", "")
-    expected = os.getenv("ADMIN_TOKEN", "")
-    return bool(expected) and _s.compare_digest(tok, expected)
+    """FASE 6.1: delega en auth.is_admin (cookie admin_token O X-Admin-Token)."""
+    return is_admin(request, settings)
 
 
 async def _snapshot_save(instancia: str) -> str:
@@ -121,7 +230,7 @@ async def _snapshot_save(instancia: str) -> str:
 @router.post("/lab/start")
 async def lab_start(
     request: Request,
-    claims: dict = Depends(get_current_alumno),
+    claims: dict = Depends(get_current_alumno_lab),
     settings: Settings = Depends(get_settings),
 ):
     """Lanza/recupera VM. Idempotente: una instancia por (alumno, lab).
@@ -170,7 +279,7 @@ async def lab_start(
 
 
 @router.get("/lab/status")
-async def lab_status(claims: dict = Depends(get_current_alumno)):
+async def lab_status(claims: dict = Depends(get_current_alumno_lab)):
     """Estado real de la instancia. Excluido del rate-limit global (polling)."""
     alumno = claims["sub"]
     lab = claims["lab"]
@@ -293,6 +402,63 @@ async def admin_reap(request: Request, settings: Settings = Depends(get_settings
     """Trigger HTTP del reaper (alternativa al timer systemd standalone)."""
     if not _admin_ok(request, settings):
         raise HTTPException(403, "admin required")
-    from .reap import reap_stale
-    destruidas = await reap_stale(settings)
-    return {"destruidas": destruidas}
+    from .reap import reap_stale, reap_apps
+    destruidas_vms = await reap_stale(settings)
+    destruidas_apps = await reap_apps(settings)
+    return {"destruidas_vms": destruidas_vms, "destruidas_apps": destruidas_apps}
+
+
+# --- FASE 6.4: /admin/instances + /metrics ---------------------------------
+@router.get("/admin/instances")
+async def admin_instances(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    limit: int = 50,
+    cursor: str = "",
+):
+    """Lista todas las instancias (VMs + apps). Paginación keyset."""
+    if not _admin_ok(request, settings):
+        raise HTTPException(403, "admin required")
+    conn = get_db()
+    vms = conn.execute(
+        """SELECT 'vm' AS tipo, nombre, alumno, lab, estado, ip_rdp AS ip, last_seen
+             FROM instancias WHERE estado != 'destruida'
+            UNION ALL
+           SELECT 'app' AS tipo, nombre_lxd AS nombre, alumno, app_id AS lab,
+                  estado, ip, last_seen
+             FROM app_instances WHERE estado != 'destruida'
+            ORDER BY nombre LIMIT ?""",
+        (limit + 1,),
+    ).fetchall()
+    items = [dict(r) for r in vms[:limit]]
+    has_more = len(vms) > limit
+    return {"instances": items, "has_more": has_more}
+
+
+@router.get("/metrics")
+async def metrics():
+    """FASE 6.4: métricas básicas para Prometheus (formato texto)."""
+    conn = get_db()
+    apps_launched = conn.execute(
+        "SELECT COUNT(*) FROM app_instances"
+    ).fetchone()[0]
+    apps_reaped = conn.execute(
+        "SELECT COUNT(*) FROM app_instances WHERE estado='destruida'"
+    ).fetchone()[0]
+    apps_active = conn.execute(
+        "SELECT COUNT(*) FROM app_instances WHERE estado IN ('creando','lista')"
+    ).fetchone()[0]
+    vms_active = conn.execute(
+        "SELECT COUNT(*) FROM instancias WHERE estado IN ('creando','lista')"
+    ).fetchone()[0]
+    lines = [
+        f"# TYPE apps_launched_total counter",
+        f"apps_launched_total {apps_launched}",
+        f"# TYPE apps_reaped_total counter",
+        f"apps_reaped_total {apps_reaped}",
+        f"# TYPE apps_active gauge",
+        f"apps_active {apps_active}",
+        f"# TYPE vms_active gauge",
+        f"vms_active {vms_active}",
+    ]
+    return Response(content="\n".join(lines) + "\n", media_type="text/plain")

@@ -1032,3 +1032,83 @@ Tras cada unidad significativa de cada fase, `lab-build` invoca a los críticos 
 - **Sliding window JWT** (8h con hard cap 12h) como mejora UX sobre el TTL fijo 1h de v1.
 - **Pool guacd** para N>100 conexiones RDP simultáneas.
 - **`__Host-lab_token`** cookie prefix si se valida compatibilidad con todos los clientes.
+
+---
+
+## FASE 6 — Portal web + apps stateless + consola admin
+
+> Diseño detallado en [`docs/FASE-6-apps-stateless.md`](docs/FASE-6-apps-stateless.md).
+> Resumen ejecutivo aquí. Generado por `lab-plan` tras analizar los subagentes
+> de dominio y auditar los críticones (18 BLOQUEANTES integrados).
+
+### Objetivo
+Pantalla login alumno, dashboard multi-lab (escoger lab + apps), apps stateless
+accesibles vía navegador, consola admin (gestión apps + VMs: crear, eliminar,
+resetear).
+
+### Sub-fases
+```
+FASE 6.0 (fix preexistente: uvicorn --host 0.0.0.0, X-Real-IP, lab_safe, /docs, iptables allowlist 8000)
+   ├─ 6.1 (auth admin + multi-lab: JWT scope, /lab/select, /admin/auth, cookies, X-Internal)
+   ├─ 6.2 (UI: FastAPI Jinja2, login, dashboard, consola admin)
+   ├─ 6.3 (apps stateless infra: builders, imágenes, launch_container, iptables-apps, /23, pool 80GB)
+   ├─ 6.4 (apps stateless API: schema, endpoints, job queue, reaper, pool guard)
+   └─ 6.5 (web-gateway multi-ruta: Nginx locations, /verify/app, proxy apps, Guacamole solo /desktop)
+```
+
+### Decisiones firmes (tras críticos)
+- **Auth admin:** magic link (sin password), `admins` separada, `ADMIN_JWT_SECRET` separado, cookie `admin_token` Path=/admin TTL 30min sin sliding, `X-Admin-Token` conservado para scripts, TOTP opcional prod (token opaco en BD), notificación email canje sin enlaces + outbox persistente.
+- **Multi-lab:** JWT con `lab` nullable + `scope` (dashboard|lab|admin). `/lab/select` reemite JWT (emitir→cookie→revocar viejo). `/verify` re-valida matrícula activa.
+- **Cross-tenant:** dos `/verify` separados (alumno/admin, secretos+aud disjuntos). Nginx sobreescribe headers. Middleware provision-api borra headers forjados. `X-Internal` compartido (env len≥32, no loguear).
+- **Apps stateless:** contenedores LXD perfil `stateless`, imagen preconstruida `local:app-<id>`, `launch_container()` separada (sin `--vm`), shared por defecto, job queue (no síncrono), hard cap inventario.
+- **Proxy apps:** Nginx `/apps/{app_id}/` → `auth_request /verify/app` (READ-ONLY) → `X-App-Target` → `proxy_pass http://$app_target`. iframe sandbox sin allow-same-origin.
+- **Reaper apps:** `reap_apps()` en `reap.py` (timer separado OnUnitActiveSec=2min), heartbeat activo, retry 3×5s + backoff, grace period tras reinicio 15min.
+- **Pool guard:** `pool_usage_pct(pool)` generalizado, cache 30s, budget preventivo.
+- **Builder apps:** `build-apps/` con `_common.sh` (IMAGE_SOURCE centralizada), espejo COMPLETO de `build-lab-vm-base-mate.sh`.
+- **Fix preexistente (6.0):** uvicorn `--host 0.0.0.0` + iptables allowlist, `X-Real-IP`, `lab_safe` redacta query, `/docs` deshabilitado, token HMAC heartbeat.
+- **Nombres:** `NAME_RE` alumnos prohibir `app-`; `APP_NAME_RE=^app-...`; sha8 si len>30.
+- **Regla triple fingerprints:** `server-setup-lxd.sh` + `build-lab-vm-base-mate.sh` + `build-apps/_common.sh`.
+- **Migración BD:** `schema_version` + file lock + assert SQLite≥3.35.
+- **`worker_heartbeat` en BD:** reaper distingue creando activo de estancado (no timeouts mágicos).
+
+### Cotas apps
+| Recurso | Cota | Límite dominante |
+|---|---|---|
+| `stateless-pool` 80GB | ~60-80 contenedores | Pool ZFS |
+| RAM host (2GB/app) | `min((RAM−VMs)/2GB, MAX_APP_INSTANCES)` | RAM |
+| `lab-stateless` /23 | ~510 IPs | Subred |
+| `/verify/app` read-only | ~200-500 req/s | JWT decode |
+| Apps shared `always_on=1` | `sum(memory_mb) ≤ ALWAYS_ON_BUDGET_MB` | RAM |
+
+**Cota realista:** ~30-50 alumnos con apps (shared por defecto) + ≤10-12
+contenedores app concurrentes pool-wide en host 32GB.
+
+### Deudas FASE 6
+- Egress allowlist apps (squid + whitelist) en prod.
+- Subdominio por app con wildcard DNS-01 si se quiere aislar sin sandbox.
+- Migración SQLite→Postgres si >50 alumnos con apps activas.
+- `X-Internal` HMAC por-request (rotación sin reinicio).
+- cgroups v2 quotas por alumno en apps shared.
+- Persistent apps (volúmenes ZFS) como FASE separada.
+- `/metrics` → Prometheus + alertas.
+
+### Críticas integradas (18 BLOQUEANTES)
+Ver tabla completa en `docs/FASE-6-apps-stateless.md` §15. Resumen:
+- `last_seen` pasivo → heartbeat activo + grace period.
+- Lanzamiento síncrono → job queue + cleanup.
+- Auto-heal síncrono → asíncrono tras yield.
+- `/verify/app` write per-request → READ-ONLY.
+- 50×5 apps per-alumno imposible → hard cap + shared por defecto + ampliar pool/subred.
+- `--force-preseed` destruye persistent-pool → `lxc storage set size=`.
+- Prefijo `app-` colisiona → NAME_RE prohibir `app-` + tipo explícito.
+- `instances.launch` `--vm` hardcoded → `launch_container()` separada.
+- Regla dual → triple fingerprints.
+- CSP iframe same-origin → sandbox sin allow-same-origin.
+- TTL admin 2h → 30min.
+- `lab_safe` loguea token → redactar query.
+- IP binding sin X-Real-IP → Nginx setea X-Real-IP.
+- `stateless-pool` sin pool guard → generalizado + cache + budget.
+- `lab-stateless /24` → /23.
+- `ON CONFLICT` partial index → sintaxis correcta SQLite≥3.35.
+- Migración BD sin lock → schema_version + file lock.
+- `/verify` no re-valida matrícula → SELECT enrollments.

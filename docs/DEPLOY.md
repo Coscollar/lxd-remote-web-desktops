@@ -11,7 +11,7 @@ convertirlos a LF antes de ejecutarlos.
 
 El entrypoint único es `install-all.sh`: desinstala cualquier instalación
 previa, instala dependencias del sistema, y ejecuta todas las fases
-(0→5) generando secretos automáticamente.
+(0→6) generando secretos automáticamente.
 
 ```bash
 git clone https://github.com/Coscollar/lxd-remote-web-desktops.git
@@ -26,6 +26,11 @@ sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com \
 - Re-ejecutable: siempre hace limpieza previa (`uninstall-all.sh --yes`).
 - Si el grupo `lxd` no está activo en la sesión, aborta con `exit 100` →
   re-login y reejecutar.
+- **FASE 6 incluida:** amplía `stateless-pool` a 80GB y `lab-stateless` a /23,
+  construye imágenes de apps (`build-apps/build-app-*.sh`), instala
+  `nginx/iptables-apps.sh` y el timer `provision-reap-apps`. Los secretos
+  adicionales (`ADMIN_JWT_SECRET`, `ADMIN_TOKEN`, `INTERNAL_TOKEN`,
+  `ADMIN_TOTP_KEY`) se generan automáticamente.
 
 Para **desinstalar todo**:
 
@@ -229,7 +234,86 @@ sudo systemctl start provision-reap.service                 # dispara reaper man
 journalctl -u provision-reap.service -e
 ```
 
-## 6. Chequeo final end-to-end
+## 6. FASE 6 — Portal web + apps stateless + consola admin
+
+Integrada en `install-all.sh`. Si se hace paso a paso:
+
+### 6.0 Fix preexistente (FASE 6.0)
+- `systemd/provision.service`: `--host 0.0.0.0` (era 127.0.0.1) para que VMs
+  y apps alcancen provision-api.
+- iptables allowlist 8000 (127.0.0.1, 10.50.10.0/24, 10.50.20.0/24).
+- Nginx `proxy_set_header X-Real-IP $remote_addr`.
+- `lab_safe` redacta query de `/auth/verify` (token).
+- `/docs` y `/openapi.json` deshabilitados en prod.
+
+### 6.1 Auth admin + multi-lab (FASE 6.1)
+- Rellenar secretos en `/etc/provision/provision.env`:
+  `ADMIN_JWT_SECRET`, `ADMIN_JWT_SECRET_PREV`, `ADMIN_TOKEN`,
+  `INTERNAL_TOKEN`, `ADMIN_TOTP_KEY` (generar con `openssl rand -hex 32`).
+- Sembrar admins:
+  ```bash
+  sudo sqlite3 /var/lib/provision/provision.db \
+    "INSERT OR IGNORE INTO admins(email,role,active,created_at)
+     VALUES('admin@ejemplo.com','admin',1,datetime('now'));"
+  ```
+
+### 6.2 UI (FASE 6.2)
+- Servida por FastAPI desde `/opt/provision/provision/web/` (rsync en
+  `provision/install.sh`). No requiere paso manual.
+
+### 6.3 Apps stateless infra (FASE 6.3)
+```bash
+# Ampliar pool + subred (no destructivo, NO --force-preseed)
+lxc storage set stateless-pool size=80GB
+lxc network set lab-stateless ipv4.address=10.50.10.1/23 --project labs
+lxc network set lab-stateless ipv4.address=10.50.10.1/23 --project default
+
+# Construir imágenes de apps
+for f in build-apps/build-app-*.sh; do sudo bash "$f"; done
+
+# Aislamiento iptables apps
+sudo bash nginx/iptables-apps.sh
+```
+
+### 6.4 Apps stateless API (FASE 6.4)
+- Integrada en `provision/install.sh` (schema, endpoints, job queue, reaper).
+- Timer `provision-reap-apps` (OnUnitActiveSec=2min).
+- Ajustar en `/etc/provision/provision.env`:
+  ```
+  APP_IDLE_MINUTES=30
+  SHARED_IDLE_HOURS=6
+  APP_CREATING_TIMEOUT=300
+  GRACE_AFTER_RESTART=900
+  MAX_APP_INSTANCES=40
+  ALWAYS_ON_BUDGET_MB=8192
+  APP_LAUNCH_SEM=6
+  ```
+- Reiniciar: `sudo systemctl restart provision`.
+
+### 6.5 Web-gateway multi-ruta (FASE 6.5)
+- `nginx/install.sh` instala `lab.conf` multi-ruta (locations + 3 auth_request).
+- `limit_req_zone appuser` en `lab-log.conf`.
+
+### Validación FASE 6
+```bash
+# Apps
+lxc image list local --project labs | grep app-
+lxc list ^app- --project labs
+
+# Portal web
+curl -kI https://lab.<dominio>/                          # 200 login
+curl -kI https://lab.<dominio>/dashboard                 # 401 sin cookie, 200 con
+curl -kI https://lab.<dominio>/admin                     # 401 sin admin_token, 200 con
+
+# Aislamiento
+sudo ss -tlnp | grep -E ':(3389|5900|3000|8888)'          # vacío
+sudo iptables -L FORWARD -n | grep lab-stateless
+
+# Servicios
+systemctl is-active provision provision-reap-apps.timer nginx
+```
+
+## 7. Chequeo final end-to-end
 
 ```bash
 # 1. Sin sesión → 401
@@ -264,6 +348,15 @@ docker compose -f guacamole/docker-compose.yml ps
   subdominio).
 - **`provision` en grupo `lxd`** ≈ root. Deuda: wrapper sudo whitelist de
   comandos `lxc`.
+- **`stateless-pool` 80GB** (FASE 6) → cota ~60-80 contenedores. Para más:
+  ampliar pool con `lxc storage set stateless-pool size=` (no destructivo).
+- **`lab-stateless` /23** (FASE 6) → ~510 IPs. Para más: /22.
+- **Apps per-alumno** (FASE 6) satura RAM (2GB/app). Cota real: ~10-12
+  concurrentes pool-wide en host 32GB. Shared por defecto.
+- **Egress filtering de apps** (FASE 6, NAT saliente): deuda prod
+  (squid + allowlist de dominios).
+- **Subdominio por app** (FASE 6) con wildcard DNS-01: deuda si se quiere
+  aislar cross-origin sin sandbox.
 
 ## Recreación intencionada de la infra LXD (destructiva)
 
@@ -287,8 +380,11 @@ sudo bash uninstall-all.sh --yes --domain=lab.example.com
 sudo bash uninstall-all.sh --purge-lxd --domain=lab.example.com
 ```
 
-Elimina: servicios systemd, instancias e imágenes LXD, stack Docker
-Guacamole, site Nginx, reglas iptables, certs certbot, usuario
+Elimina: servicios systemd (incluido `provision-reap-apps`), instancias e
+imágenes LXD (incluidas `app-*`), stack Docker Guacamole, site Nginx, reglas
+iptables (incluidas iptables-apps y allowlist 8000), certs certbot, usuario
 `provision` y directorios. **No** desinstala paquetes del sistema (nginx,
-docker, certbot, snap LXD) ni el repo en disco. Ver `docs/USO.md` para
-desinstalar paquetes del sistema manualmente.
+docker, certbot, snap LXD) ni el repo en disco. **No** revierte la ampliación
+de pool/subred (ZFS shrink peligroso; /23 no perjudica). Usa `--purge-lxd`
+para eliminar pools completamente. Ver `docs/USO.md` para desinstalar
+paquetes del sistema manualmente.

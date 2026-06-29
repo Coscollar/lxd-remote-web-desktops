@@ -20,13 +20,23 @@ if command -v dos2unix >/dev/null 2>&1; then dos2unix "$CONF_SRC" 2>/dev/null ||
 LOG_INC="/etc/nginx/conf.d/lab-log.conf"
 if [ ! -f "$LOG_INC" ]; then
   install -m0644 /dev/stdin "$LOG_INC" <<'EOF'
-log_format lab_safe '$remote_addr $lab_alumno/$lab_name - $request';
+# FASE 6.0: redactar query string de /auth/verify y /admin/auth/verify (lleva el token)
+map $request_uri $loggable_request {
+    ~^/auth/verify       "REDACTED";
+    ~^/admin/auth/verify "REDACTED";
+    default              $request;
+}
+
+log_format lab_safe '$remote_addr $lab_alumno/$lab_name - $loggable_request';
 
 # WebSocket Connection upgrade map (evita túnel RDP caiga a polling)
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
+
+# FASE 6.5: rate-limit por alumno para apps stateless (anti noisy-neighbor)
+limit_req_zone $lab_alumno zone=appuser:10m rate=30r/s;
 EOF
 fi
 

@@ -1,11 +1,12 @@
 ## **Orden resumen**
 
  1️⃣ Infra LXD → ✅  
- 2️⃣ Imagen base VM →   
- 3️⃣ Cloud-init alumno  
- 4️⃣ Provisión on-demand  
- 5️⃣ Acceso web  
- 6️⃣ Políticas (snapshot, destroy)
+ 2️⃣ Imagen base VM → ✅  
+ 3️⃣ Cloud-init alumno → ✅  
+ 4️⃣ Provisión on-demand → ✅  
+ 5️⃣ Acceso web → ✅  
+ 6️⃣ Políticas (snapshot, destroy) → ✅  
+ 7️⃣ Portal web + apps stateless + consola admin → FASE 6
 
 Herramientas:
 
@@ -70,3 +71,51 @@ Los valores asignados a cada uno de los campos se definirán más adelante para 
 | `lxc image list local +------------------------+--------------+--------+---------------------------------------------+--------------+-----------------+-----------+-----------------------------+ |         ALIAS          | FINGERPRINT  | PUBLIC |                 DESCRIPTION                 | ARCHITECTURE |      TYPE       |   SIZE    |         UPLOAD DATE         | +------------------------+--------------+--------+---------------------------------------------+--------------+-----------------+-----------+-----------------------------+ | ubuntu-22.04-container | a6d2f7222476 | no     | ubuntu 22.04 LTS amd64 (release) (20251122) | x86_64       | CONTAINER       | 444.46MiB | Dec 2, 2025 at 6:13pm (UTC) | +------------------------+--------------+--------+---------------------------------------------+--------------+-----------------+-----------+-----------------------------+ | ubuntu-22.04-vm        | cf181d732f32 | no     | ubuntu 22.04 LTS amd64 (release) (20251122) | x86_64       | VIRTUAL-MACHINE | 628.65MiB | Dec 2, 2025 at 6:12pm (UTC) | +------------------------+--------------+--------+---------------------------------------------+--------------+-----------------+-----------+-----------------------------+` |
 
 LO SIGUIENTE ES CREAR UNA IMAGEN BASE CON CLUD-INIT PARA CREAR LAS MAQUINAS PARA LOS ALUMNOS Y UN CLOUD-INIT POR ALUMNO (UTILIZAR PLANTILLA) PAR TERMINAR DE CONFIGURAR LA IMAGEN
+
+---
+
+## FASE 6 — Portal web + apps stateless + consola admin
+
+> Diseño detallado en `docs/FASE-6-apps-stateless.md`.
+
+### Objetivo
+- Pantalla de login para alumnos.
+- Dashboard del alumno: escoger entre máquinas de laboratorio y acceder vía navegador.
+- Apps stateless accesibles desde el navegador (contenedores LXD, HTTP, no RDP).
+- Pantalla de admin para gestionar apps stateless disponibles (catálogo).
+- Pantalla de admin para gestionar máquinas de alumnos (crear, eliminar, resetear).
+
+### Sub-fases
+- 6.0 Fix preexistente (uvicorn --host 0.0.0.0, X-Real-IP, lab_safe, /docs, iptables allowlist 8000).
+- 6.1 Auth admin + multi-lab (JWT scope, /lab/select, /admin/auth, cookies, X-Internal).
+- 6.2 UI (FastAPI Jinja2, login, dashboard, consola admin).
+- 6.3 Apps stateless infra (builders, imágenes, launch_container, iptables-apps, /23, pool 80GB).
+- 6.4 Apps stateless API (schema, endpoints, job queue, reaper, pool guard).
+- 6.5 Web-gateway multi-ruta (Nginx locations, /verify/app, proxy apps, Guacamole solo /desktop).
+
+### Regla triple fingerprints (extiende la dual de FASE 0)
+Si cambias de release, actualiza fingerprints en `server-setup-lxd.sh` **Y** `IMAGE_SOURCE` en `build-lab-vm-base-mate.sh` **Y** `IMAGE_SOURCE` en `build-apps/_common.sh`.
+
+### Cotas de escalabilidad (FASE 6)
+
+| Recurso | Cota | Límite dominante |
+|---|---|---|
+| `stateless-pool` 80GB | ~60-80 contenedores concurrentes | Pool ZFS |
+| RAM host (2GB/app) | `min((RAM_host−RAM_VMs)/2GB, MAX_APP_INSTANCES)` | RAM |
+| `lab-stateless` /23 | ~510 IPs | Subred |
+| `/verify/app` read-only | ~200-500 req/s | JWT decode |
+| SQLite single-writer (sin write per-request) | ≤50 alumnos | Writer lock |
+| Apps shared `always_on=1` | `sum(memory_mb) ≤ ALWAYS_ON_BUDGET_MB` | RAM |
+| Guacd (sin cambio, apps HTTP no usan guacd) | ≤100 RDP simultáneos | RAM/puertos host |
+
+**Cota realista FASE 6:** ~30-50 alumnos con apps (shared por defecto) + ≤10-12
+contenedores app concurrentes pool-wide en host 32GB. Para más: ampliar RAM +
+pool + subred.
+
+### Notas operativas
+- `stateless-pool` 20GB (preseed) es insuficiente para apps; `install-all.sh` lo amplía a 80GB con `lxc storage set size=80GB` (no destructivo, NO `--force-preseed` que destruiría `persistent-pool`).
+- `lab-stateless` /24 (preseed) se agota con ~250 apps; `install-all.sh` la amplía a /23 con `lxc network set ipv4.address=10.50.10.1/23` (no destructivo).
+- `uvicorn --host 127.0.0.1` (FASE 3) no permite que VMs/apps alcancen provision-api; FASE 6.0 cambia a `--host 0.0.0.0` + iptables allowlist.
+- `instances.launch()` tiene `--vm` hardcoded; las apps usan `launch_container()` separada (sin `--vm`, perfil `stateless`).
+- `/verify/app` es READ-ONLY (no escribe `last_seen`); el heartbeat de la app actualiza `last_seen` (como las VMs).
+- Auto-heal de shared `always_on=1` es asíncrono (job queue tras yield), no síncrono en lifespan.

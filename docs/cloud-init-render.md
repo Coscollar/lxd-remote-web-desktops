@@ -79,6 +79,26 @@ cambios de plantilla/token: si provision-api re-aplica cloud-init con un token
 distinto, el sha cambia y el operador puede forzar re-provisionado borrando el
 guardián. En operación normal, una re-aplicación de cloud-init es no-op.
 
+## Cloud-init de apps stateless (FASE 6, opcional)
+
+Las apps stateless usan **imagen preconstruida** (`local:app-<id>`) por
+defecto, sin cloud-init. Si una app necesita config runtime (token del
+alumno, binding de puerto, `PROVISION_URL_APP`), se pasa un cloud-init mínimo
+vía stdin:
+
+```bash
+lxc launch local:app-<id> <nombre> -p stateless --project labs -c user.user-data=-
+```
+
+Si la app recibe cloud-init, **debe** esperar `cloud-init status --wait`
+(timeout 120s) antes del healthcheck HTTP. Decisión binaria: o la app es 100%
+preconstruida (sin cloud-init, healthcheck HTTP basta), o recibe cloud-init
+(entonces wait). No hay término medio silencioso.
+
+El cloud-init de apps **no commitea render**: se pasa in-memory vía stdin
+(igual que las VMs). Variables interpolables: `APP_SERVICE_TOKEN`,
+`PROVISION_URL_APP` (`http://10.50.10.1:8000`), config específica de la app.
+
 ## Validación manual (FASE 2)
 
 ```bash

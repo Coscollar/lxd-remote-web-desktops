@@ -32,3 +32,49 @@ lxc network list
 lxc profile list
 lxc project list
 lxc image list local
+
+FASE 6 — Apps stateless (contenedores LXD, perfil stateless):
+
+Construir imagen de app (builder, espejo de build-lab-vm-base-mate.sh):
+	sudo bash build-apps/build-app-jupyter.sh
+	sudo bash build-apps/build-app-jupyter.sh --force   # reconstruir
+
+Listar imágenes de apps:
+	lxc image list local --project labs | grep app-
+
+Lanzar app shared (manual, normalmente vía provision-api job queue):
+	lxc launch local:app-jupyter app-jupyter -p stateless --project labs -c boot.autostart=true
+
+Lanzar app per-alumno:
+	lxc launch local:app-jupyter app-jupyter-alumno1 -p stateless --project labs
+
+Healthcheck HTTP de app (HTTP real, no TCP):
+	IP=$(lxc list app-jupyter -c4 --format csv --project labs | cut -d, -f1)
+	curl -sf http://${IP}:8888/
+
+Detener/eliminar app (idempotente):
+	lxc stop app-jupyter --project labs --timeout=30 || lxc stop app-jupyter --project labs --force
+	lxc delete -f app-jupyter --project labs
+
+Ampliar stateless-pool (no destructivo, NO --force-preseed que destruiría persistent-pool):
+	lxc storage set stateless-pool size=80GB
+
+Ampliar subred lab-stateless a /23 (no destructivo):
+	lxc network set lab-stateless ipv4.address=10.50.10.1/23 --project labs
+	lxc network set lab-stateless ipv4.address=10.50.10.1/23 --project default
+
+Aislamiento iptables apps:
+	sudo bash nginx/iptables-apps.sh
+
+Validaciones FASE 6:
+	lxc image list local --project labs | grep app-
+	lxc list ^app- --project labs
+	sudo iptables -L FORWARD -n | grep lab-stateless
+	sudo ss -tlnp | grep -E ':(3389|5900|3000|8888)'   # debe estar vacío
+
+Portal web (FASE 6):
+	https://lab.<dominio>/            # login alumno
+	https://lab.<dominio>/dashboard   # dashboard alumno (multi-lab + apps)
+	https://lab.<dominio>/admin/login # login admin
+	https://lab.<dominio>/desktop/<lab>/  # escritorio VM vía Guacamole
+	https://lab.<dominio>/apps/<app_id>/  # app stateless vía Nginx proxy
