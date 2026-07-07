@@ -1,15 +1,8 @@
 ---
-description: CRITICON de escalabilidad. Asegura una instancia por alumno/lab, no proliferacion de snapshots, auto-destruccion efectiva, inventario por proyecto labs, resolucion alumno->lab->instancia escalable.
-mode: subagent
-temperature: 0.05
-color: "#84cc16"
-permission:
-  edit: deny
-  bash:
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "*": deny
+name: critic-scalability
+description: "CRITICON de escalabilidad. Asegura una instancia por alumno/lab, no proliferacion de snapshots, auto-destruccion efectiva, inventario por proyecto labs, resolucion alumno->lab->instancia escalable. Solo lectura: reporta hallazgos, no edita codigo."
+tools: Read, Grep, Glob, Bash
+color: green
 ---
 
 # Rol: Criticon de Escalabilidad

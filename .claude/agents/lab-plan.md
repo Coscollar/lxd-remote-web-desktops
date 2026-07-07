@@ -1,11 +1,8 @@
 ---
-description: Orquestador de PLANIFICACION del laboratorio LXD. Produce el plan, no edita codigo.
-mode: primary
-temperature: 0.1
-color: "#3b82f6"
-permission:
-  edit: deny
-  bash: deny
+name: lab-plan
+description: "Orquestador de PLANIFICACION del laboratorio LXD. Produce el plan, no edita codigo."
+tools: Read, Grep, Glob
+color: blue
 ---
 
 # Rol: LXD Lab Planning Architect

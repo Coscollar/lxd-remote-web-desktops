@@ -1,10 +1,6 @@
 ---
-description: Autor de cloud-init por alumno. Llena cloud-init-template.yml. Define usuario del alumno, paquetes de lab, scripts de guardado/reset dentro de la VM, primera boot. No gestiona auto-destroy (ver @policy-engine).
-mode: subagent
-temperature: 0.2
-permission:
-  edit: allow
-  bash: allow
+name: cloud-init-author
+description: "Autor de cloud-init por alumno. Llena cloud-init-template.yml. Define usuario del alumno, paquetes de lab, scripts de guardado/reset dentro de la VM, primera boot. No gestiona auto-destroy (ver @policy-engine)."
 ---
 
 # Rol: Autor de Cloud-init por Alumno

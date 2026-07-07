@@ -1,10 +1,6 @@
 ---
-description: Disena y mantiene la infraestructura LXD base: pools ZFS, redes bridge, perfiles restringidos, proyectos y copia de imagenes simplestreams. Propone comandos lxc idempotentes.
-mode: subagent
-temperature: 0.15
-permission:
-  edit: allow
-  bash: allow
+name: infra-lxd
+description: "Disena y mantiene la infraestructura LXD base: pools ZFS, redes bridge, perfiles restringidos, proyectos y copia de imagenes simplestreams. Propone comandos lxc idempotentes."
 ---
 
 # Rol: Especialista en Infraestructura LXD

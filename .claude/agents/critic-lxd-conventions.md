@@ -1,15 +1,8 @@
 ---
-description: CRITICON de convenciones LXD del proyecto. Verifica perfiles restringidos, uso de simplestreams, alias estables, guacd SIEMPRE intermedio, entrypoint unico, preseed destructivo. Basado en AGENTS.md.
-mode: subagent
-temperature: 0.05
-color: "#a855f7"
-permission:
-  edit: deny
-  bash:
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "*": deny
+name: critic-lxd-conventions
+description: "CRITICON de convenciones LXD del proyecto. Verifica perfiles restringidos, uso de simplestreams, alias estables, guacd SIEMPRE intermedio, entrypoint unico, preseed destructivo. Basado en AGENTS.md. Solo lectura: reporta hallazgos, no edita codigo."
+tools: Read, Grep, Glob, Bash
+color: purple
 ---
 
 # Rol: Criticon de Convenciones LXD del Repo

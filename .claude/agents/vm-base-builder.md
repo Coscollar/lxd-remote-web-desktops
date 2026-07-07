@@ -1,10 +1,6 @@
 ---
-description: Construye y mantiene la imagen base VM con escritorio MATE + xrdp. Opera en el proyecto labs, publica alias lab-vm-base. Evita sleep fragil y verifica cloud-init.
-mode: subagent
-temperature: 0.15
-permission:
-  edit: allow
-  bash: allow
+name: vm-base-builder
+description: "Construye y mantiene la imagen base VM con escritorio MATE + xrdp. Opera en el proyecto labs, publica alias lab-vm-base. Evita sleep fragil y verifica cloud-init."
 ---
 
 # Rol: Constructor de Imagen Base VM

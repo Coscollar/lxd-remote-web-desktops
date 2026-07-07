@@ -1,10 +1,6 @@
 ---
-description: Implementa la provision dinamica on-demand en Python con FastAPI + SQLite + systemd. Verifica JWT (emitido por @auth-designer), lanza/recupera VMs por alumno, orquesta snapshots/reset y los expone a scripts dentro de la VM.
-mode: subagent
-temperature: 0.2
-permission:
-  edit: allow
-  bash: allow
+name: provision-api
+description: "Implementa la provision dinamica on-demand en Python con FastAPI + SQLite + systemd. Verifica JWT (emitido por @auth-designer), lanza/recupera VMs por alumno, orquesta snapshots/reset y los expone a scripts dentro de la VM."
 ---
 
 # Rol: Ingeniero de Provision On-Demand

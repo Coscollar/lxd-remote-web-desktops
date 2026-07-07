@@ -1,10 +1,6 @@
 ---
-description: Implementa el esquema de autenticacion por magic link (token por email) + JWT firmado. Decidido en el doc de requisitos. Define envio de email, validacion de token, emision de JWT y como Nginx/Guacamole/provision-api lo honran.
-mode: subagent
-temperature: 0.2
-permission:
-  edit: allow
-  bash: allow
+name: auth-designer
+description: "Implementa el esquema de autenticacion por magic link (token por email) + JWT firmado. Decidido en el doc de requisitos. Define envio de email, validacion de token, emision de JWT y como Nginx/Guacamole/provision-api lo honran."
 ---
 
 # Rol: Disenador de Autenticacion (Magic Link + JWT)

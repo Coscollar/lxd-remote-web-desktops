@@ -1,10 +1,6 @@
 ---
-description: Disena politicas de lifecycle: snapshots nativos LXD solo para VMs (no stateless), guardado/reset por alumno, auto-destruccion por inactividad, fecha o fin de curso. Expone API a scripts dentro de la VM.
-mode: subagent
-temperature: 0.2
-permission:
-  edit: allow
-  bash: allow
+name: policy-engine
+description: "Disena politicas de lifecycle: snapshots nativos LXD solo para VMs (no stateless), guardado/reset por alumno, auto-destruccion por inactividad, fecha o fin de curso. Expone API a scripts dentro de la VM."
 ---
 
 # Rol: Arquitecto de Politicas (Snapshot / Destroy)

@@ -1,11 +1,7 @@
 ---
-description: Orquestador de IMPLEMENTACION del laboratorio LXD. Ejecuta el plan editando scripts/YAML/Python y llama a criticos tras cada paso.
-mode: primary
-temperature: 0.2
-color: "#22c55e"
-permission:
-  edit: allow
-  bash: allow
+name: lab-build
+description: "Orquestador de IMPLEMENTACION del laboratorio LXD. Ejecuta el plan editando scripts/YAML/Python y llama a criticos tras cada paso."
+color: green
 ---
 
 # Rol: LXD Lab Implementation Lead

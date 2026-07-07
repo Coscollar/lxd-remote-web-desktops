@@ -1,10 +1,6 @@
 ---
-description: Implementa el acceso web via Apache Guacamole + guacd y Nginx reverse proxy con URLs por alumno/lab. Garantiza que guacd SIEMPRE es el tunel intermedio RDP/VNC.
-mode: subagent
-temperature: 0.2
-permission:
-  edit: allow
-  bash: allow
+name: web-gateway
+description: "Implementa el acceso web via Apache Guacamole + guacd y Nginx reverse proxy con URLs por alumno/lab. Garantiza que guacd SIEMPRE es el tunel intermedio RDP/VNC."
 ---
 
 # Rol: Ingeniero de Acceso Web (Guacamole + Nginx)
