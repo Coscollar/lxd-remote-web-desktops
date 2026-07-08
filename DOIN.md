@@ -76,8 +76,6 @@ LO SIGUIENTE ES CREAR UNA IMAGEN BASE CON CLUD-INIT PARA CREAR LAS MAQUINAS PARA
 
 ## FASE 6 — Portal web + apps stateless + consola admin
 
-> Diseño detallado en `docs/FASE-6-apps-stateless.md`.
-
 ### Objetivo
 - Pantalla de login para alumnos.
 - Dashboard del alumno: escoger entre máquinas de laboratorio y acceder vía navegador.

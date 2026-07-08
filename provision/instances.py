@@ -45,6 +45,18 @@ def _check_name(name: str) -> str:
     return name
 
 
+def _check_instance_name(name: str) -> str:
+    """Acepta nombres de VM (NAME_RE) o de app (APP_NAME_RE).
+
+    Para operaciones genéricas del ciclo de vida (exists/get_state/get_ip/
+    start/stop/delete) que sirven tanto a VMs de alumno como a contenedores
+    de apps. launch de VM y snapshots siguen siendo NAME_RE estricto.
+    """
+    if not isinstance(name, str) or not (NAME_RE.match(name) or APP_NAME_RE.match(name)):
+        raise ValueError(f"nombre de instancia inválido: {name!r}")
+    return name
+
+
 def _check_tag(tag: str) -> str:
     if not isinstance(tag, str) or not TAG_RE.match(tag):
         raise ValueError(f"tag inválido: {tag!r}")
@@ -105,20 +117,20 @@ def _raise(rc: int, err: bytes, what: str) -> None:
 
 # --- consultas --------------------------------------------------------------
 async def exists(instancia: str) -> bool:
-    _check_name(instancia)
+    _check_instance_name(instancia)
     rc, out, _ = await lxc("list", f"^{instancia}$", "-c", "n", "--format", "csv")
     return any(line.strip() == instancia for line in out.decode().splitlines())
 
 
 async def get_state(instancia: str) -> str:
     """Estado LXD: RUNNING/STOPPED/... Vacío si no existe."""
-    _check_name(instancia)
+    _check_instance_name(instancia)
     rc, out, _ = await lxc("list", f"^{instancia}$", "-c", "s", "--format", "csv")
     return out.decode().strip()
 
 
 async def get_ip(instancia: str) -> str:
-    _check_name(instancia)
+    _check_instance_name(instancia)
     rc, out, _ = await lxc("list", f"^{instancia}$", "-c", "4", "--format", "csv")
     ip = out.decode().strip()
     if not ip:
@@ -148,7 +160,7 @@ async def launch(instancia: str, user_data: bytes) -> None:
 
 
 async def start(instancia: str) -> None:
-    _check_name(instancia)
+    _check_instance_name(instancia)
     rc, _, err = await lxc("start", instancia, timeout=60)
     _raise(rc, err, "lxc start")
 
@@ -160,7 +172,7 @@ async def start_if_stopped(instancia: str) -> None:
 
 async def stop(instancia: str, *, force: bool = False) -> None:
     """Idempotente: si ya STOPPED, no hace nada."""
-    _check_name(instancia)
+    _check_instance_name(instancia)
     if await get_state(instancia) == "STOPPED":
         return
     args = ["stop", instancia]
@@ -172,7 +184,7 @@ async def stop(instancia: str, *, force: bool = False) -> None:
 
 async def delete(instancia: str) -> None:
     """Idempotente: si no existe, no hace nada."""
-    _check_name(instancia)
+    _check_instance_name(instancia)
     if not await exists(instancia):
         return
     rc, _, err = await lxc("delete", "-f", instancia, timeout=60)
@@ -401,5 +413,5 @@ async def wait_cloud_init_app(instancia: str, timeout: int = 120) -> None:
             f"{out2.decode(errors='replace')}"
         )
     _, out2, _ = await lxc("exec", instancia, "--", "cloud-init", "status", "--long")
-    if "status: done" not in out2.decode("replace"):
+    if "status: done" not in out2.decode(errors="replace"):
         raise RuntimeError(f"cloud-init no terminó en done en app: {out2.decode(errors='replace').strip()}")

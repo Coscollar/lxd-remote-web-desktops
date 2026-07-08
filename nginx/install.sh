@@ -40,6 +40,40 @@ limit_req_zone $lab_alumno zone=appuser:10m rate=30r/s;
 EOF
 fi
 
+# 1b. F3.0: definir $internal_token (header X-Internal Nginx→provision-api).
+#     Sin esta map, lab.conf no carga: «unknown "internal_token" variable».
+#     Se regenera SIEMPRE (el token rota con cada reinstalación).
+INT_INC="/etc/nginx/conf.d/lab-internal.conf"
+ENV_FILE="/etc/provision/provision.env"
+INTERNAL_TOKEN=""
+if [ -r "$ENV_FILE" ]; then
+  INTERNAL_TOKEN="$(grep -E '^INTERNAL_TOKEN=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
+  # Tolerar valor entrecomillado en el .env
+  INTERNAL_TOKEN="${INTERNAL_TOKEN%\"}"; INTERNAL_TOKEN="${INTERNAL_TOKEN#\"}"
+  INTERNAL_TOKEN="${INTERNAL_TOKEN%\'}"; INTERNAL_TOKEN="${INTERNAL_TOKEN#\'}"
+fi
+# Fail-fast: sin token válido, todo el sitio devolvería 403 en silencio.
+if [ -z "$INTERNAL_TOKEN" ] || [ "${#INTERNAL_TOKEN}" -lt 32 ]; then
+  echo "[install.sh] ERROR: INTERNAL_TOKEN ausente o <32 chars en $ENV_FILE." >&2
+  echo "             Ejecuta antes provision/install.sh + generación de secretos (install-all.sh)." >&2
+  exit 1
+fi
+case "$INTERNAL_TOKEN" in
+  *'"'*|*';'*|*'\'*|*'$'*|*'{'*|*'}'*)
+    echo "[install.sh] ERROR: INTERNAL_TOKEN contiene caracteres no válidos para nginx.conf (\" ; \\ \$ { })." >&2
+    exit 1 ;;
+esac
+umask 077
+cat > "$INT_INC" <<EOF
+# Generado por nginx/install.sh — NO editar ni commitear (contiene secreto).
+# Token compartido Nginx→provision-api (header X-Internal). Nunca se loguea.
+map \$host \$internal_token {
+    default "${INTERNAL_TOKEN}";
+}
+EOF
+chmod 0600 "$INT_INC"
+umask 022
+
 # 2. Emitir cert PRIMERO (standalone, nginx parado) si no existe.
 if [ ! -d "$CERT_DIR" ]; then
   echo "[install.sh] emitiendo cert para ${DOMINIO} (standalone)..."

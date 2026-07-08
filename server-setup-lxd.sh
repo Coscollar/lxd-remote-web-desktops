@@ -32,6 +32,16 @@ fi
 # ---------------------------------------------------------------------------
 echo "==> Instalando LXD vía snap"
 if ! command -v lxd >/dev/null 2>&1; then
+  if ! command -v snap >/dev/null 2>&1; then
+    echo "ERROR: snapd no está instalado. Ejecuta install-all.sh (lo instala en el preflight)" >&2
+    echo "       o instala manualmente: sudo apt-get install -y snapd" >&2
+    exit 1
+  fi
+  # Esperar a que snapd esté sembrado (uso standalone sin install-all.sh).
+  if ! sudo timeout 300 snap wait system seed.loaded; then
+    echo "ERROR: snapd no terminó de sembrarse en 300s (snap wait system seed.loaded)" >&2
+    exit 1
+  fi
   sudo snap install lxd
 else
   echo "LXD ya está instalado"

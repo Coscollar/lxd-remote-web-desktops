@@ -66,19 +66,46 @@ ver `docs/DEPLOY.md`.
 5. Entrarás en la consola admin (cookie `admin_token`, TTL 30 min sin
    sliding). Recibirás un email de notificación de canje.
 
-Desde la consola puedes:
-- **Labs:** crear, editar, desactivar labs.
-- **Matrículas:** matricular alumnos (email → lab).
-- **Apps stateless:** añadir apps al catálogo (nombre, imagen
-  `local:app-<id>`, puerto HTTP, shared/per-alumno, always_on, labs
-  asignados).
-- **Instancias:** listar todas (VMs + apps), filtrar, destruir, resetear,
-  forzar creación de VM para un alumno.
-- **Lanzar/detener apps shared** globales.
+Desde la consola (pestañas) puedes:
+- **Instancias:** listar todas (VMs + apps) con paginación ("Cargar más"),
+  y **Destruir** cualquiera (`POST /admin/instances/{nombre}/destroy?tipo=vm|app`).
+- **Labs:** listar (con nº de matriculados e instancias vivas), crear
+  (`POST /admin/labs`), editar imagen/deadline y activar/desactivar
+  (`PATCH /admin/labs/{nombre}`). Desactivar es soft (no borra).
+- **Matrículas:** listar (filtro por lab, paginación), matricular
+  (`POST /admin/enrollments`), baja/realta (`PATCH /admin/enrollments`) y
+  **Lanzar VM** de un alumno (`POST /admin/instances/launch` — encola el
+  mismo job que usa el alumno; responde 202).
+- **Apps stateless:** alta (`POST /admin/apps`: id, imagen `local:app-<id>`,
+  puerto HTTP, shared/per-alumno, always_on, cpu/mem, labs), edición y
+  reactivación (`PATCH /admin/apps/{id}`), desactivación con destrucción
+  encolada de instancias vivas (`DELETE /admin/apps/{id}`), y Start/Stop/
+  Reset de la instancia shared (Reset = stop + start).
 
-### Operaciones habituales
+> **Alta de admins:** deliberadamente NO existe en la consola ni en la API.
+> Es el privilegio máximo y se gestiona solo por SQL (ver más abajo).
+
+Todas las mutaciones de la API admin exigen el header
+`X-Requested-With: XMLHttpRequest` además de la cookie `admin_token` (o
+`X-Admin-Token` para automatización).
+
+### Operación avanzada / fallback (CLI)
+
+Todo lo de la consola web puede hacerse también por `curl`/`sqlite3`
+(automatización o si el portal no está disponible):
 
 ```bash
+# Gestión de labs y matrículas vía API (mismos endpoints que la consola)
+curl -s -X POST http://127.0.0.1:8000/admin/labs \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -d '{"nombre":"lab2","imagen":"local:lab-vm-base"}'
+curl -s http://127.0.0.1:8000/admin/enrollments -H "X-Admin-Token: $ADMIN_TOKEN"
+curl -s -X POST http://127.0.0.1:8000/admin/instances/launch \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -d '{"alumno":"alumno1","lab":"lab1"}'
+
 # Listar instancias activas (VMs)
 sudo sqlite3 /var/lib/provision/provision.db \
   "SELECT nombre,alumno,lab,estado,ip_rdp,last_seen FROM instancias;"
@@ -96,10 +123,11 @@ lxc list --project labs
 lxc list ^app- --project labs   # solo apps
 
 # Destruir manualmente una instancia (VM o app)
-curl -s -X POST "http://127.0.0.1:8000/admin/instances/lab1-alumno1/destroy?tipo=vm" \
-  -H "X-Admin-Token: $ADMIN_TOKEN"
+curl -s -X POST "http://127.0.0.1:8000/admin/instances/alumno1-lab1/destroy?tipo=vm" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'X-Requested-With: XMLHttpRequest'
 curl -s -X POST "http://127.0.0.1:8000/admin/instances/app-jupyter-alumno1/destroy?tipo=app" \
-  -H "X-Admin-Token: $ADMIN_TOKEN"
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'X-Requested-With: XMLHttpRequest'
+# (POST /admin/destroy?instancia=... sigue existiendo como alias deprecado, solo VMs)
 
 # Disparar el reaper a mano (VMs)
 curl -s -X POST http://127.0.0.1:8000/admin/reap -H "X-Admin-Token: $ADMIN_TOKEN"
@@ -123,7 +151,11 @@ sudo bash build-apps/build-app-jupyter.sh --force
 # Para admin: ADMIN_JWT_SECRET_PREV + ADMIN_JWT_SECRET.
 ```
 
-### Matricular / dar de baja alumnos y admins
+### Matricular / dar de baja alumnos y admins (SQL)
+
+Las matrículas se gestionan normalmente desde la consola web; el SQL queda
+como fallback. **El alta/baja de admins es SOLO-SQL por diseño** (sin
+endpoint ni UI: el privilegio máximo no se gestiona desde la propia consola).
 
 ```bash
 # Alta alumno

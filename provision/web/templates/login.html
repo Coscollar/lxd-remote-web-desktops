@@ -3,35 +3,12 @@
 <div class="login-card">
   <h2>{% if admin %}Acceso administrador{% else %}Acceso al laboratorio{% endif %}</h2>
   <p>Introduce tu correo electrónico para recibir un enlace de acceso.</p>
-  <form id="login-form">
+  {# F3.1: el modo admin viaja por atributo DOM; el JS es estático (CSP sin inline). #}
+  <form id="login-form" data-admin="{{ 'true' if admin else 'false' }}">
     <input type="email" id="email" name="email" placeholder="tu@correo.es" required autofocus>
     <button type="submit">Enviar enlace</button>
   </form>
   <p id="msg" class="msg"></p>
 </div>
-<script>
-document.getElementById('login-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = document.getElementById('email').value;
-  const msg = document.getElementById('msg');
-  msg.textContent = 'Enviando...';
-  const endpoint = {% if admin %}'/admin/auth/request'{% else %}'/auth/request'{% endif %};
-  try {
-    const resp = await fetch(endpoint, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
-      body: JSON.stringify({email})
-    });
-    if (resp.ok) {
-      msg.textContent = 'Revisa tu correo. Si no lo ves, comprueba spam.';
-    } else if (resp.status === 429) {
-      msg.textContent = 'Demasiadas peticiones. Espera unos minutos.';
-    } else {
-      msg.textContent = 'Error. Inténtalo de nuevo.';
-    }
-  } catch (err) {
-    msg.textContent = 'Error de red.';
-  }
-});
-</script>
+<script src="/static/js/login.js" defer></script>
 {% endblock %}

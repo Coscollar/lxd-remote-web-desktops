@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS enrollments(
 );
 CREATE INDEX IF NOT EXISTS idx_enrollments_email_active ON enrollments(email, active);
 CREATE INDEX IF NOT EXISTS idx_enrollments_alumno_active ON enrollments(alumno_id, active);
+-- F2: COUNT de matriculados por lab en /admin/labs + filtro lab de /admin/enrollments
+CREATE INDEX IF NOT EXISTS idx_enrollments_lab_active ON enrollments(lab, active);
 
 -- Revocación de sesiones JWT (alumno)
 CREATE TABLE IF NOT EXISTS jwt_jti(
@@ -94,6 +96,8 @@ CREATE TABLE IF NOT EXISTS instancias(
 );
 CREATE INDEX IF NOT EXISTS idx_inst_last_seen ON instancias(last_seen);
 CREATE INDEX IF NOT EXISTS idx_inst_estado   ON instancias(estado);
+-- F2: COUNT de instancias vivas por lab en /admin/labs
+CREATE INDEX IF NOT EXISTS idx_inst_lab_estado ON instancias(lab, estado);
 
 -- FASE 3: heartbeats de VM (separado de instancias.last_seen para no competir)
 CREATE TABLE IF NOT EXISTS heartbeats(

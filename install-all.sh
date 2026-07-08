@@ -13,13 +13,16 @@
 #   --email=EMAIL    Email admin para certbot (Let's Encrypt).
 #
 # Flags opcionales:
-#   --smtp-user=U    Usuario SMTP (Mailtrap o real). Si vacío, se deja para rellenar.
-#   --smtp-pass=P    Password SMTP.
+#   --smtp-user=U      Usuario SMTP (Mailtrap o real). Si vacío, se deja para rellenar.
+#   --smtp-pass=P      Password SMTP.
+#   --skip-preflight   Degrada los aborts del preflight a warnings (bajo tu
+#                      responsabilidad; útil en entornos no estándar).
 #
 # Requisitos previos:
-#   - Ubuntu Server LTS con acceso root.
+#   - Ubuntu Server 22.04/24.04 limpio con acceso root (el preflight lo verifica).
 #   - DNS: registro A apuntando DOM a la IP pública del host.
 #   - Firewall edge: 80/tcp y 443/tcp abiertos hacia el host.
+#   - Virtualización KVM disponible (/dev/kvm) — VT-x/AMD-V o nested KVM.
 set -Eeuo pipefail
 
 if grep -q $'\r' "$0"; then
@@ -37,14 +40,16 @@ DOMAIN=""
 EMAIL=""
 SMTP_USER=""
 SMTP_PASS=""
+SKIP_PREFLIGHT=0
 
 for arg in "$@"; do
   case "$arg" in
-    --domain=*)    DOMAIN="${arg#--domain=}" ;;
-    --email=*)     EMAIL="${arg#--email=}" ;;
-    --smtp-user=*) SMTP_USER="${arg#--smtp-user=}" ;;
-    --smtp-pass=*) SMTP_PASS="${arg#--smtp-pass=}" ;;
-    --help|-h)     sed -n '2,25p' "$0"; exit 0 ;;
+    --domain=*)       DOMAIN="${arg#--domain=}" ;;
+    --email=*)        EMAIL="${arg#--email=}" ;;
+    --smtp-user=*)    SMTP_USER="${arg#--smtp-user=}" ;;
+    --smtp-pass=*)    SMTP_PASS="${arg#--smtp-pass=}" ;;
+    --skip-preflight) SKIP_PREFLIGHT=1 ;;
+    --help|-h)        sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $arg" >&2; exit 1 ;;
   esac
 done
@@ -53,6 +58,14 @@ if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
   echo "ERROR: --domain y --email son obligatorios." >&2
   echo "Uso: sudo bash $0 --domain=lab.example.com --email=admin@example.com" >&2
   exit 1
+fi
+
+# apt nunca interactivo en toda la instalación + preseed de iptables-persistent
+# (sin esto, iptables-persistent abre un diálogo debconf y bloquea el script).
+export DEBIAN_FRONTEND=noninteractive
+if command -v debconf-set-selections >/dev/null 2>&1; then
+  echo 'iptables-persistent iptables-persistent/autosave_v4 boolean true' | debconf-set-selections
+  echo 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | debconf-set-selections
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,6 +89,120 @@ done
 echo "OK"
 
 # ---------------------------------------------------------------------------
+# 0b. Preflight — verificaciones fail-fast del host antes de tocar nada.
+#     --skip-preflight degrada los ABORT a warnings (bajo responsabilidad
+#     del operador). Cada check es re-ejecutable: verifica y solo instala
+#     lo que falta.
+# ---------------------------------------------------------------------------
+echo "==> 0b. Preflight del host"
+PREFLIGHT_ERRORS=0
+PREFLIGHT_LOG="/var/log/lab-preflight-apt.log"
+
+pf_abort() {
+  if [ "$SKIP_PREFLIGHT" -eq 1 ]; then
+    echo "  WARN (--skip-preflight): $1" >&2
+  else
+    echo "  ERROR: $1" >&2
+    PREFLIGHT_ERRORS=1
+  fi
+}
+pf_warn() { echo "  WARN: $1" >&2; }
+
+# --- Checks read-only primero (no instalan nada) ---------------------------
+# SO soportado: Ubuntu 22.04 / 24.04
+if [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case "${ID:-}-${VERSION_ID:-}" in
+    ubuntu-22.04|ubuntu-24.04) echo "  SO: Ubuntu ${VERSION_ID} OK" ;;
+    *) pf_abort "SO no soportado (${ID:-desconocido} ${VERSION_ID:-}). Se requiere Ubuntu Server 22.04 o 24.04." ;;
+  esac
+else
+  pf_abort "no se puede leer /etc/os-release para verificar el SO."
+fi
+
+# KVM (ABORT): sin /dev/kvm las VMs LXD fallan tarde y de forma críptica
+# en build-lab-vm-base-mate.sh.
+if [ -c /dev/kvm ]; then
+  echo "  KVM: /dev/kvm presente OK"
+else
+  pf_abort "/dev/kvm no existe. Habilita VT-x/AMD-V en la BIOS o la virtualización anidada en el hipervisor."
+fi
+
+# --- Checks que pueden instalar paquetes: solo si no hay aborts previos ----
+if [ "$PREFLIGHT_ERRORS" -ne 0 ]; then
+  echo "  (checks con instalación de paquetes omitidos: hay errores previos)" >&2
+else
+  # ZFS (ABORT): el preseed usa driver zfs en stateless-pool y persistent-pool.
+  if modprobe zfs 2>/dev/null; then
+    echo "  ZFS: módulo zfs cargado OK"
+  else
+    echo "  ZFS: módulo ausente; instalando zfsutils-linux + linux-modules-extra-$(uname -r) (log: $PREFLIGHT_LOG)..."
+    apt-get install -y zfsutils-linux "linux-modules-extra-$(uname -r)" >>"$PREFLIGHT_LOG" 2>&1 || true
+    if modprobe zfs 2>/dev/null; then
+      echo "  ZFS: módulo zfs cargado tras instalación OK"
+    else
+      pf_abort "no se pudo cargar zfs.ko. Revisa $PREFLIGHT_LOG. En kernels cloud (-kvm/-aws) linux-modules-extra-$(uname -r) puede no existir: usa un kernel -generic o instala zfs-dkms. Si el kernel se actualizó, reinicia y reintenta."
+    fi
+  fi
+
+  # snapd: necesario para 'snap install lxd' en server-setup-lxd.sh.
+  if ! command -v snap >/dev/null 2>&1; then
+    echo "  snapd: ausente; instalando (log: $PREFLIGHT_LOG)..."
+    apt-get install -y snapd >>"$PREFLIGHT_LOG" 2>&1 || pf_abort "no se pudo instalar snapd. Revisa $PREFLIGHT_LOG."
+  fi
+  if command -v snap >/dev/null 2>&1; then
+    if timeout 180 snap wait system seed.loaded 2>/dev/null; then
+      echo "  snapd: OK"
+    else
+      pf_warn "snapd no terminó de sembrarse en 180s (snap wait system seed.loaded); snap install lxd podría fallar."
+    fi
+  fi
+fi
+
+# Puertos 80/443: ocupados por algo distinto de nginx → ABORT.
+ports_ok=1
+for port in 80 443; do
+  occ="$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1' || true)"
+  if [ -n "$occ" ] && ! printf '%s\n' "$occ" | grep -q 'users:(("nginx"'; then
+    pf_abort "puerto $port ocupado por un proceso distinto de nginx: $(printf '%s\n' "$occ" | head -n1)"
+    ports_ok=0
+  fi
+done
+if [ "$ports_ok" -eq 1 ]; then
+  echo "  Puertos 80/443: OK"
+fi
+
+# DNS del dominio → WARN (el veredicto final lo da certbot).
+if getent hosts "$DOMAIN" >/dev/null 2>&1; then
+  echo "  DNS: $DOMAIN resuelve OK"
+else
+  pf_warn "el dominio $DOMAIN no resuelve (getent hosts). certbot fallará si el registro A no apunta a este host."
+fi
+
+# ufw activo → WARN (convivencia con las reglas iptables del proyecto).
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+  pf_warn "ufw está activo; puede interferir con nginx/iptables-lab.sh e iptables-apps.sh."
+fi
+
+# RAM / disco → WARN (cotas en README.md §"Cotas de escalabilidad").
+ram_gb="$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo || true)"
+if [ "${ram_gb:-0}" -lt 8 ]; then
+  pf_warn "RAM total ${ram_gb:-?}GB < 8GB recomendados."
+fi
+disk_gb="$(df -BG --output=avail / 2>/dev/null | awk 'NR==2 {gsub("G",""); print $1}' || true)"
+if [ "${disk_gb:-0}" -lt 100 ]; then
+  pf_warn "espacio libre en / ${disk_gb:-?}GB < 100GB recomendados."
+fi
+
+if [ "$PREFLIGHT_ERRORS" -ne 0 ]; then
+  echo "" >&2
+  echo "Preflight FALLÓ. Corrige los ERROR anteriores, o re-ejecuta con --skip-preflight bajo tu responsabilidad." >&2
+  exit 1
+fi
+echo "OK: preflight superado"
+
+# ---------------------------------------------------------------------------
 # 1. Desinstalación previa (instalación limpia)
 # ---------------------------------------------------------------------------
 echo "==> 1. Desinstalación previa (instalación limpia)"
@@ -92,12 +219,9 @@ echo "OK"
 # 2. Instalar dependencias del sistema
 # ---------------------------------------------------------------------------
 echo "==> 2. Dependencias del sistema"
-DEPS="dos2unix sqlite3 nginx certbot python3-venv rsync curl openssl iptables-persistent"
-apt-get install -y -qq $DEPS >/dev/null 2>&1 || {
-  # iptables-persistent puede pedir input; reintentar con DEBIAN_FRONTEND
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y $DEPS
-}
+# DEBIAN_FRONTEND=noninteractive ya exportado tras el parse de args.
+DEPS="dos2unix sqlite3 nginx certbot python3 python3-venv rsync curl openssl iptables-persistent ca-certificates snapd zfsutils-linux tar gzip"
+apt-get install -y -qq $DEPS >/dev/null 2>&1 || apt-get install -y $DEPS
 
 # Docker + compose v2
 if ! command -v docker >/dev/null 2>&1; then
@@ -345,12 +469,9 @@ docker compose -f "$SCRIPT_DIR/guacamole/docker-compose.yml" ps --format '{{.Nam
 echo ""
 echo "URL de acceso: https://$DOMAIN"
 echo ""
-echo "Secretos generados (guárdalos en un sitio seguro):"
-echo "  ADMIN_TOKEN        : $ADMIN_TOKEN"
-echo "  INTERNAL_TOKEN     : $INTERNAL_TOKEN"
-echo "  JWT_SECRET         : $JWT_SECRET"
-echo "  ADMIN_JWT_SECRET   : $ADMIN_JWT_SECRET"
-echo "  (demás secretos en /etc/provision/provision.env)"
+echo "Secretos generados: NO se imprimen por seguridad."
+echo "  Todos están en /etc/provision/provision.env (root:provision, 0640)."
+echo "  Consulta: sudo less /etc/provision/provision.env"
 echo ""
 if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
   echo "⚠️  SMTP sin configurar. Edita /etc/provision/provision.env y rellena:"

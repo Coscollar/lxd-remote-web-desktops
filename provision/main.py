@@ -30,8 +30,9 @@ from .auth import (
 )
 from .config import Settings, get_settings
 from .db import get_db, init_db, tx
-from .jobs import JobWorker, enqueue_launch
+from .jobs import JobWorker, start_launch
 from .policy import reset_to_base, restore_tag, snapshot_save
+from .admin import destroy_vm, router as admin_router
 from .apps import router as apps_router
 from .web import router as web_router
 
@@ -97,7 +98,7 @@ async def reconcile_apps_dry_run() -> None:
     conn = get_db()
     rows = conn.execute(
         """SELECT ai.nombre_lxd, ai.estado, ai.app_id, ai.alumno, ai.worker_heartbeat,
-                  a.shared, a.always_on
+                  a.shared, a.always_on, a.activo
              FROM app_instances ai
              JOIN apps a ON a.id = ai.app_id
             WHERE ai.estado != 'destruida'"""
@@ -110,7 +111,18 @@ async def reconcile_apps_dry_run() -> None:
                     (r["nombre_lxd"],),
                 )
                 log.warning("orphan app: %s creando huérfana → error", r["nombre_lxd"])
-            elif r["shared"] and r["always_on"]:
+            elif r["estado"] == "destruyendo":
+                # F2: destrucción interrumpida y contenedor ya ausente → destruida.
+                # (NUNCA auto-heal de una fila en destrucción.)
+                conn.execute(
+                    "UPDATE app_instances SET estado='destruida' WHERE nombre_lxd=? AND estado='destruyendo'",
+                    (r["nombre_lxd"],),
+                )
+                conn.execute(
+                    "DELETE FROM app_tokens WHERE instancia=?", (r["nombre_lxd"],)
+                )
+                log.info("orphan app: %s destruyendo sin contenedor → destruida", r["nombre_lxd"])
+            elif r["shared"] and r["always_on"] and r["activo"]:
                 # Auto-heal: encolar job (asíncrono, no bloquea arranque)
                 conn.execute(
                     "UPDATE app_instances SET estado='creando' WHERE nombre_lxd=?",
@@ -125,6 +137,13 @@ async def reconcile_apps_dry_run() -> None:
                     (r["nombre_lxd"],),
                 )
                 log.info("orphan app: %s → destruida", r["nombre_lxd"])
+        elif r["estado"] == "destruyendo":
+            # F2: contenedor aún vivo con destrucción pendiente (crash entre
+            # marcar 'destruyendo' y encolar) → re-encolar job destroy_app
+            # (el worker re-verifica el estado antes de borrar).
+            from .jobs import enqueue_destroy_app
+            enqueue_destroy_app(r["nombre_lxd"])
+            log.info("reanudada destrucción pendiente de %s", r["nombre_lxd"])
     conn.commit()
 
 
@@ -137,9 +156,18 @@ async def lifespan(app: FastAPI):
     worker = JobWorker(settings)
     app.state.worker = worker
     await worker.start()
-    # FASE 6.4: reconcile apps asíncrono (no bloquea arranque)
+    # FASE 6.4: reconcile apps asíncrono (no bloquea arranque).
+    # F2 (M4): referencia guardada + excepciones logueadas (este task es el
+    # que rescata filas 'destruyendo' huérfanas; no puede fallar en silencio).
     import asyncio as _aio
-    _aio.create_task(reconcile_apps_dry_run())
+
+    async def _reconcile_apps_guarded() -> None:
+        try:
+            await reconcile_apps_dry_run()
+        except Exception:
+            log.exception("reconcile_apps_dry_run falló")
+
+    app.state.reconcile_apps_task = _aio.create_task(_reconcile_apps_guarded())
     yield
     await worker.stop()
 
@@ -187,6 +215,7 @@ async def f6_hardening_middleware(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(router)
+app.include_router(admin_router)
 app.include_router(apps_router)
 app.include_router(web_router)
 
@@ -235,38 +264,15 @@ async def lab_start(
 ):
     """Lanza/recupera VM. Idempotente: una instancia por (alumno, lab).
 
-    BEGIN IMMEDIATE + INSERT ON CONFLICT DO UPDATE SET estado='creando'
-    WHERE estado IN ('destruida','error'). Si estado era creando/lista →
-    202 sin relanzar. Encola job launch y responde 202.
+    F2: delega en jobs.start_launch (helper compartido con
+    /admin/instances/launch): BEGIN IMMEDIATE + upsert a 'creando' +
+    job queue. Si estado era creando/lista → 202/200 sin relanzar.
     """
     alumno = claims["sub"]
     lab = claims["lab"]
-    instancia = instances.instancia_nombre(alumno, lab)
+    instancia, encolado, estado, ip = start_launch(alumno, lab)
 
-    conn = get_db()
-    conn.execute("BEGIN IMMEDIATE;")
-    try:
-        cur = conn.execute(
-            """INSERT INTO instancias(nombre, alumno, lab, estado)
-               VALUES(?, ?, ?, 'creando')
-               ON CONFLICT(alumno, lab) DO UPDATE SET
-                 estado='creando', last_seen=datetime('now')
-                 WHERE estado IN ('destruida','error')""",
-            (instancia, alumno, lab),
-        )
-        relanzar = cur.rowcount > 0
-        row = conn.execute(
-            "SELECT estado, ip_rdp FROM instancias WHERE nombre=?", (instancia,)
-        ).fetchone()
-        conn.execute("COMMIT;")
-    except Exception:
-        conn.execute("ROLLBACK;")
-        raise
-
-    estado = row["estado"] if row else "creando"
-    ip = row["ip_rdp"] if row else None
-
-    if not relanzar:
+    if not encolado:
         if estado == "lista":
             return JSONResponse(
                 {"estado": "lista", "instancia": instancia, "ip_rdp": ip},
@@ -274,7 +280,6 @@ async def lab_start(
             )
         return JSONResponse({"estado": estado, "instancia": instancia}, status_code=202)
 
-    enqueue_launch(alumno, lab)
     return JSONResponse({"estado": "creando", "instancia": instancia}, status_code=202)
 
 
@@ -376,25 +381,25 @@ async def get_snapshots(request: Request, settings: Settings = Depends(get_setti
     return {"snapshots": snaps}
 
 
-# --- /admin/* (127.0.0.1 o X-Admin-Token) ---------------------------------
+# --- /admin/* (cookie admin_token o X-Admin-Token) --------------------------
 @router.post("/admin/destroy")
 async def admin_destroy(
     request: Request,
     instancia: str,
     settings: Settings = Depends(get_settings),
 ):
+    """DEPRECADO: alias de POST /admin/instances/{nombre}/destroy?tipo=vm.
+
+    Se conserva para automatización existente (curl). Delegado al camino
+    nuevo (admin.destroy_vm, anti-TOCTOU)."""
     if not _admin_ok(request, settings):
         raise HTTPException(403, "admin required")
-    instances._check_name(instancia)
-    await instances.delete(instancia)
-    with tx() as c:
-        c.execute(
-            "UPDATE instancias SET estado='destruida', ip_rdp=NULL WHERE nombre=?",
-            (instancia,),
-        )
-        c.execute("DELETE FROM heartbeats WHERE instancia=?", (instancia,))
-        c.execute("DELETE FROM vm_tokens WHERE instancia=?", (instancia,))
-    return {"ok": True, "instancia": instancia}
+    try:
+        instances._check_name(instancia)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    await destroy_vm(instancia)
+    return {"ok": True, "instancia": instancia, "deprecated": True}
 
 
 @router.post("/admin/reap")
@@ -416,23 +421,30 @@ async def admin_instances(
     limit: int = 50,
     cursor: str = "",
 ):
-    """Lista todas las instancias (VMs + apps). Paginación keyset."""
+    """Lista todas las instancias (VMs + apps). Paginación keyset REAL:
+    cursor = último `nombre` de la página anterior (F2 fix: antes se
+    aceptaba el parámetro pero se ignoraba)."""
     if not _admin_ok(request, settings):
         raise HTTPException(403, "admin required")
+    limit = max(1, min(limit, 200))
     conn = get_db()
-    vms = conn.execute(
-        """SELECT 'vm' AS tipo, nombre, alumno, lab, estado, ip_rdp AS ip, last_seen
-             FROM instancias WHERE estado != 'destruida'
-            UNION ALL
-           SELECT 'app' AS tipo, nombre_lxd AS nombre, alumno, app_id AS lab,
-                  estado, ip, last_seen
-             FROM app_instances WHERE estado != 'destruida'
-            ORDER BY nombre LIMIT ?""",
-        (limit + 1,),
+    rows = conn.execute(
+        """SELECT * FROM (
+             SELECT 'vm' AS tipo, nombre, alumno, lab, estado, ip_rdp AS ip, last_seen
+               FROM instancias WHERE estado != 'destruida'
+              UNION ALL
+             SELECT 'app' AS tipo, nombre_lxd AS nombre, alumno, app_id AS lab,
+                    estado, ip, last_seen
+               FROM app_instances WHERE estado != 'destruida'
+           )
+           WHERE nombre > ?
+           ORDER BY nombre LIMIT ?""",
+        (cursor, limit + 1),
     ).fetchall()
-    items = [dict(r) for r in vms[:limit]]
-    has_more = len(vms) > limit
-    return {"instances": items, "has_more": has_more}
+    items = [dict(r) for r in rows[:limit]]
+    has_more = len(rows) > limit
+    next_cursor = items[-1]["nombre"] if (items and has_more) else None
+    return {"instances": items, "has_more": has_more, "next_cursor": next_cursor}
 
 
 @router.get("/metrics")

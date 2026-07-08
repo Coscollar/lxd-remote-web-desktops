@@ -66,6 +66,62 @@ def enqueue_launch_app(app_id: str, alumno: Optional[str], nombre_lxd: str, **ex
     return cur.lastrowid
 
 
+def enqueue_destroy_app(nombre_lxd: str, **extra) -> int:
+    """F2: Encola un job `destroy_app` (baja de app con instancias vivas).
+
+    El worker solo destruye si la fila sigue en estado 'destruyendo'
+    (anti-TOCTOU); nunca se destruye en bucle síncrono en el handler.
+    """
+    payload = json.dumps({"nombre_lxd": nombre_lxd, **extra})
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO jobs(tipo, payload, estado) VALUES ('destroy_app', ?, 'pending')",
+        (payload,),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def start_launch(alumno: str, lab: str) -> tuple[str, bool, str, Optional[str]]:
+    """Camino ÚNICO de lanzamiento de VMs (usado por /lab/start y por
+    /admin/instances/launch). Upsert atómico a 'creando' (BEGIN IMMEDIATE)
+    y encolado del job launch si procede — NUNCA lanza síncrono.
+
+    Devuelve (instancia, encolado, estado_actual, ip_rdp).
+    """
+    instancia = instances.instancia_nombre(alumno, lab)
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            """INSERT INTO instancias(nombre, alumno, lab, estado)
+               VALUES(?, ?, ?, 'creando')
+               ON CONFLICT(alumno, lab) DO UPDATE SET
+                 estado='creando', last_seen=datetime('now')
+                 WHERE estado IN ('destruida','error')""",
+            (instancia, alumno, lab),
+        )
+        relanzar = cur.rowcount > 0
+        row = conn.execute(
+            "SELECT estado, ip_rdp FROM instancias WHERE nombre=?", (instancia,)
+        ).fetchone()
+        if relanzar:
+            # Encolado en la MISMA tx: sin ventana de crash entre el upsert
+            # a 'creando' y el INSERT del job (quedaría atascada en creando).
+            conn.execute(
+                "INSERT INTO jobs(tipo, payload, estado) VALUES ('launch', ?, 'pending')",
+                (json.dumps({"alumno": alumno, "lab": lab}),),
+            )
+        conn.execute("COMMIT;")
+    except Exception:
+        conn.execute("ROLLBACK;")
+        raise
+
+    estado = row["estado"] if row else "creando"
+    ip = row["ip_rdp"] if row else None
+    return instancia, relanzar, estado, ip
+
+
 class JobWorker:
     """Worker único (uvicorn --workers 1). Reclama y ejecuta jobs pendientes."""
 
@@ -157,6 +213,8 @@ class JobWorker:
             await self._run_launch(job)
         elif job["tipo"] == "launch_app":
             await self._run_launch_app(job)
+        elif job["tipo"] == "destroy_app":
+            await self._run_destroy_app(job)
         else:
             self._mark_error(job["id"], f"tipo no soportado por el worker: {job['tipo']}")
 
@@ -256,6 +314,60 @@ class JobWorker:
                     (nombre_lxd,),
                 )
             self._mark_error(jid, str(e))
+
+    async def _run_destroy_app(self, job: sqlite3.Row) -> None:
+        """F2: Destruye una instancia de app marcada 'destruyendo'.
+
+        Anti-TOCTOU: re-check del estado DENTRO de BEGIN IMMEDIATE antes de
+        borrar; si ya no está 'destruyendo' (relanzada/destruida por otro
+        camino), no hace nada. instances.delete es tolerante a not-found.
+        """
+        jid = job["id"]
+        payload = json.loads(job["payload"] or "{}")
+        nombre_lxd = payload["nombre_lxd"]
+        conn = get_db()
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            r = conn.execute(
+                "SELECT estado FROM app_instances WHERE nombre_lxd=?", (nombre_lxd,)
+            ).fetchone()
+            if r is None or r["estado"] != "destruyendo":
+                conn.execute("COMMIT;")
+                self._mark_done(jid)
+                log.info("destroy_app skip %s (estado=%s)", nombre_lxd,
+                         r["estado"] if r else "inexistente")
+                return
+            conn.execute("COMMIT;")
+        except Exception:
+            conn.execute("ROLLBACK;")
+            raise
+        try:
+            await instances.delete(nombre_lxd)  # idempotente
+        except Exception:
+            # No dejar la fila atascada en 'destruyendo': error → reaper reintenta.
+            with tx() as c:
+                c.execute(
+                    "UPDATE app_instances SET estado='error' WHERE nombre_lxd=? AND estado='destruyendo'",
+                    (nombre_lxd,),
+                )
+            raise
+        with tx() as c:
+            # Guard de estado: no pisar una instancia relanzada durante el
+            # lxc delete (solo transiciona destruyendo→destruida).
+            cur = c.execute(
+                "UPDATE app_instances SET estado='destruida', ip=NULL "
+                "WHERE nombre_lxd=? AND estado='destruyendo'",
+                (nombre_lxd,),
+            )
+            if cur.rowcount > 0:
+                c.execute("DELETE FROM app_tokens WHERE instancia=?", (nombre_lxd,))
+            else:
+                log.warning(
+                    "destroy_app %s: estado cambió durante el delete; no se marca destruida",
+                    nombre_lxd,
+                )
+        self._mark_done(jid)
+        log.info("destroy_app OK %s", nombre_lxd)
 
     def _mark_done(self, jid: int) -> None:
         conn = get_db()

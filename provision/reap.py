@@ -126,11 +126,11 @@ async def reap_apps(settings: Optional[Settings] = None) -> list[str]:
     # Fase 1: SELECT candidatos
     rows = conn.execute(
         """SELECT ai.nombre_lxd, ai.estado, ai.alumno, ai.last_seen, ai.worker_heartbeat,
-                  a.shared, a.always_on,
+                  a.shared, a.always_on, a.activo,
                   (julianday('now') - julianday(ai.last_seen)) * 86400 AS idle_sec
              FROM app_instances ai
              JOIN apps a ON a.id = ai.app_id
-            WHERE ai.estado IN ('lista','detenida','error','creando')"""
+            WHERE ai.estado IN ('lista','detenida','error','creando','destruyendo')"""
     ).fetchall()
     candidates: list[str] = []
     for r in rows:
@@ -148,8 +148,13 @@ async def reap_apps(settings: Optional[Settings] = None) -> list[str]:
                 ).fetchone()[0]
                 if wh_ts > 60:
                     candidates.append(r["nombre_lxd"])
-        elif r["shared"] and r["always_on"]:
-            continue  # NUNCA se reap
+        elif r["estado"] == "destruyendo":
+            # F2: destrucción estancada (job destroy_app perdido/fallido):
+            # tras creating_timeout el reaper la remata él mismo.
+            if idle_sec >= creating_timeout:
+                candidates.append(r["nombre_lxd"])
+        elif r["shared"] and r["always_on"] and r["activo"]:
+            continue  # NUNCA se reap (solo mientras la app siga activa)
         elif r["shared"]:
             if idle_sec >= shared_idle_hours * 3600:
                 candidates.append(r["nombre_lxd"])
@@ -175,7 +180,7 @@ async def reap_apps(settings: Optional[Settings] = None) -> list[str]:
                 idle_sec = r["idle_sec"] or 0
                 # Re-check: sigue cumpliendo criterio?
                 should = (
-                    (r["estado"] == "creando" and idle_sec >= creating_timeout)
+                    (r["estado"] in ("creando", "destruyendo") and idle_sec >= creating_timeout)
                     or (r["estado"] in ("lista", "detenida", "error") and idle_sec >= idle_min * 60)
                 )
                 if not should:

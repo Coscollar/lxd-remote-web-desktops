@@ -27,7 +27,7 @@ fi
 
 # 3. Defensa en profundidad: restringir OUTPUT al UID de guacd (si corre como host process)
 #    En Docker network_mode: host, guacd corre con su UID dentro del contenedor.
-#    Ajustar GUACD_UID según el despliegue (ver docs/web-gateway.md).
+#    Ajustar GUACD_UID según el despliegue (ver docs/DEPLOY.md, Anexo B).
 GUACD_UID="${GUACD_UID:-1000}"
 if ! sudo iptables -C OUTPUT -m owner --uid-owner "$GUACD_UID" -d "$VM_NET" -p tcp --dport 3389 -j ACCEPT 2>/dev/null; then
   sudo iptables -I OUTPUT -m owner --uid-owner "$GUACD_UID" -d "$VM_NET" -p tcp --dport 3389 -j ACCEPT

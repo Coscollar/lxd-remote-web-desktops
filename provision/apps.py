@@ -40,6 +40,21 @@ class AppCreate(BaseModel):
     labs: list[str] = []
 
 
+class AppPatch(BaseModel):
+    """F2.4: edición parcial del catálogo (incluye reactivar con activo=1)."""
+    nombre: Optional[str] = None
+    imagen: Optional[str] = None
+    shared: Optional[int] = None
+    always_on: Optional[int] = None
+    puerto_http: Optional[int] = None
+    cpu: Optional[int] = None
+    memory_mb: Optional[int] = None
+    cmd: Optional[str] = None
+    descripcion: Optional[str] = None
+    activo: Optional[int] = None
+    labs: Optional[list[str]] = None
+
+
 # --- Helpers ----------------------------------------------------------------
 def _app_exists(app_id: str) -> bool:
     row = get_db().execute("SELECT 1 FROM apps WHERE id=? AND activo=1", (app_id,)).fetchone()
@@ -81,12 +96,19 @@ def _resolve_app_instance(app_id: str, alumno_id: str) -> Optional[dict]:
 
 
 # --- Endpoints alumno -------------------------------------------------------
+# F3.0: cada endpoint se registra TAMBIÉN bajo /api/apps/* (alias, misma
+# función). Motivo: en Nginx, /apps/{id}/... proxya al contenedor de la app;
+# la API del alumno viaja por `location /api/` (auth_request /verify) sin
+# colisionar con ese proxy. Las rutas /apps/* se conservan para llamadas
+# internas ya existentes.
+@router.get("/api/apps")
 @router.get("/apps")
 async def list_apps(claims: dict = Depends(get_current_alumno)):
     """Apps stateless disponibles para el alumno."""
     return {"apps": _apps_for_alumno(claims["sub"])}
 
 
+@router.post("/api/apps/{app_id}/start")
 @router.post("/apps/{app_id}/start")
 async def start_app(
     app_id: str,
@@ -144,6 +166,7 @@ async def start_app(
     return JSONResponse({"estado": "creando", "nombre_lxd": nombre_lxd}, status_code=202)
 
 
+@router.get("/api/apps/{app_id}/status")
 @router.get("/apps/{app_id}/status")
 async def app_status(
     app_id: str,
@@ -156,6 +179,7 @@ async def app_status(
     return {"estado": row["estado"], "url": f"/apps/{app_id}/" if row["estado"] == "lista" else None}
 
 
+@router.post("/api/apps/{app_id}/reset")
 @router.post("/apps/{app_id}/reset")
 async def reset_app(
     app_id: str,
@@ -185,10 +209,15 @@ async def reset_app(
     await instances.delete(nombre_lxd)
     from .jobs import enqueue_launch_app
     with tx() as c:
-        c.execute(
-            "UPDATE app_instances SET estado='creando', ip=NULL, last_seen=datetime('now') WHERE nombre_lxd=?",
+        # Guard: no resucitar una instancia en destrucción administrativa.
+        cur = c.execute(
+            "UPDATE app_instances SET estado='creando', ip=NULL, last_seen=datetime('now') "
+            "WHERE nombre_lxd=? AND estado != 'destruyendo'",
             (nombre_lxd,),
         )
+        resucitable = cur.rowcount > 0
+    if not resucitable:
+        raise HTTPException(409, "la app está en proceso de destrucción")
     enqueue_launch_app(app_id, None if app["shared"] else alumno_id, nombre_lxd)
     return {"ok": True, "nombre_lxd": nombre_lxd}
 
@@ -287,17 +316,129 @@ async def admin_create_app(
     return {"ok": True, "id": body.id}
 
 
+@router.patch("/admin/apps/{app_id}")
+async def admin_patch_app(
+    app_id: str,
+    body: AppPatch,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """F2.4: edita campos del catálogo y/o reactiva (activo=1).
+
+    Si el resultado deja la app con always_on=1 y activa, re-valida
+    ALWAYS_ON_BUDGET_MB igual que el POST de alta.
+    """
+    if not is_admin(request, settings):
+        raise HTTPException(403, "admin required")
+    if request.headers.get("x-requested-with") != "XMLHttpRequest":
+        raise HTTPException(403, "X-Requested-With required")
+    conn = get_db()
+    app = conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone()
+    if app is None:
+        raise HTTPException(404, "app no encontrada")
+
+    if body.imagen is not None:
+        rc, _, _ = await instances.lxc("image", "show", body.imagen)
+        if rc != 0:
+            raise HTTPException(400, f"imagen {body.imagen} no encontrada en labs")
+    if body.puerto_http is not None and not (3000 <= body.puerto_http <= 9999):
+        raise HTTPException(422, "puerto_http debe estar entre 3000 y 9999")
+    for campo in ("shared", "always_on", "activo"):
+        v = getattr(body, campo)
+        if v is not None and v not in (0, 1):
+            raise HTTPException(422, f"{campo} debe ser 0 o 1")
+    if body.labs is not None:
+        for lab in body.labs:
+            try:
+                instances._check_name(lab)
+            except ValueError as e:
+                raise HTTPException(422, str(e))
+
+    # Valores efectivos tras el patch (para revalidar el budget always_on)
+    eff = {k: app[k] for k in app.keys()}
+    for campo in ("nombre", "imagen", "shared", "always_on", "puerto_http",
+                  "cpu", "memory_mb", "cmd", "descripcion", "activo"):
+        v = getattr(body, campo)
+        if v is not None:
+            eff[campo] = v
+    if eff["always_on"] and eff["activo"]:
+        total = conn.execute(
+            "SELECT COALESCE(SUM(memory_mb),0) FROM apps WHERE always_on=1 AND activo=1 AND id != ?",
+            (app_id,),
+        ).fetchone()[0]
+        if total + eff["memory_mb"] > settings.always_on_budget_mb:
+            raise HTTPException(
+                409,
+                f"ALWAYS_ON_BUDGET_MB excedido ({total + eff['memory_mb']} > {settings.always_on_budget_mb})",
+            )
+
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            """UPDATE apps SET nombre=?, imagen=?, shared=?, always_on=?,
+                    puerto_http=?, cpu=?, memory_mb=?, cmd=?, descripcion=?, activo=?
+               WHERE id=?""",
+            (eff["nombre"], eff["imagen"], eff["shared"], eff["always_on"],
+             eff["puerto_http"], eff["cpu"], eff["memory_mb"], eff["cmd"],
+             eff["descripcion"], eff["activo"], app_id),
+        )
+        if body.labs is not None:
+            conn.execute("DELETE FROM app_lab WHERE app_id=?", (app_id,))
+            for lab in body.labs:
+                conn.execute(
+                    "INSERT OR IGNORE INTO app_lab(app_id, lab) VALUES(?,?)",
+                    (app_id, lab),
+                )
+        conn.execute("COMMIT;")
+    except Exception:
+        conn.execute("ROLLBACK;")
+        raise
+    return {"ok": True, "id": app_id}
+
+
 @router.delete("/admin/apps/{app_id}")
 async def admin_delete_app(
     app_id: str,
     request: Request,
     settings: Settings = Depends(get_settings),
 ):
+    """F2.4: soft-delete del catálogo + destrucción ENCOLADA de las
+    instancias vivas (job destroy_app; nunca bucle síncrono en el handler).
+    Las filas pasan a 'destruyendo' en la misma tx (anti-TOCTOU con reaper).
+    """
     if not is_admin(request, settings):
         raise HTTPException(403, "admin required")
-    with tx() as c:
-        c.execute("UPDATE apps SET activo=0 WHERE id=?", (app_id,))
-    return {"ok": True}
+    if request.headers.get("x-requested-with") != "XMLHttpRequest":
+        raise HTTPException(403, "X-Requested-With required")
+    conn = get_db()
+    app = conn.execute("SELECT 1 FROM apps WHERE id=?", (app_id,)).fetchone()
+    if app is None:
+        raise HTTPException(404, "app no encontrada")
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute("UPDATE apps SET activo=0 WHERE id=?", (app_id,))
+        # Incluye 'destruyendo': re-ejecutar el DELETE re-encola las que un
+        # job fallido dejó a medias (el job destroy_app es idempotente).
+        vivas = conn.execute(
+            """SELECT nombre_lxd FROM app_instances
+                WHERE app_id=? AND estado IN ('creando','lista','detenida','error','destruyendo')""",
+            (app_id,),
+        ).fetchall()
+        nombres = [r["nombre_lxd"] for r in vivas]
+        for n in nombres:
+            conn.execute(
+                "UPDATE app_instances SET estado='destruyendo' WHERE nombre_lxd=?",
+                (n,),
+            )
+        conn.execute("COMMIT;")
+    except Exception:
+        conn.execute("ROLLBACK;")
+        raise
+    # Encolar FUERA de la tx (enqueue hace su propio commit en la misma conexión).
+    from .jobs import enqueue_destroy_app
+    for n in nombres:
+        enqueue_destroy_app(n)
+    return {"ok": True, "id": app_id, "instancias_encoladas": len(nombres)}
 
 
 @router.post("/admin/apps/{app_id}/start")

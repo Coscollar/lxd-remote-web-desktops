@@ -26,3 +26,11 @@ main { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
 table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
 th, td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid #eee; }
 th { background: #1a3a5c; color: #fff; }
+/* F3.2 — consola admin */
+.btn-secondary { background: #e0e0e0; color: #222; border: none; padding: 0.3rem 0.6rem; border-radius: 4px; cursor: pointer; margin-right: 0.3rem; }
+.btn-secondary:hover { background: #d0d0d0; }
+.msg-error { color: #c0392b; }
+.inline-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; background: #fff; padding: 1rem; border-radius: 8px; margin: 0.5rem 0 1.5rem; }
+.inline-form input { padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; }
+.inline-form label { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: #444; }
+td button { margin-bottom: 0.2rem; }
