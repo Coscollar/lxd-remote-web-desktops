@@ -4,17 +4,23 @@
 # Siempre que se ejecuta: desinstala el proyecto completo (uninstall-all.sh)
 # y lo reinstala de cero. Genera secretos automáticamente con openssl.
 #
-# Uso:
+# Uso (asistente dirigido — recomendado):
+#   sudo bash install-all.sh
+#   Sin flags y desde un terminal, pide interactivamente todo lo necesario
+#   (dominio, email certbot, admin de la consola, SMTP) con validación y
+#   resumen de confirmación antes de tocar nada.
+#
+# Uso (no interactivo, automatización):
 #   sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com \
-#       [--smtp-user=xxx --smtp-pass=yyy]
+#       [--admin-email=admin@example.com --smtp-user=xxx --smtp-pass=yyy]
 #
-# Flags obligatorias:
-#   --domain=DOM     Dominio público (ej. lab.example.com) para Nginx + certbot.
-#   --email=EMAIL    Email admin para certbot (Let's Encrypt).
-#
-# Flags opcionales:
+# Flags:
+#   --domain=DOM       Dominio público (ej. lab.example.com) para Nginx + certbot.
+#   --email=EMAIL      Email admin para certbot (Let's Encrypt).
+#   --admin-email=E    Primer admin de la consola web (se siembra en BD).
 #   --smtp-user=U      Usuario SMTP (Mailtrap o real). Si vacío, se deja para rellenar.
-#   --smtp-pass=P      Password SMTP.
+#   --smtp-pass=P      Password SMTP (visible en ps/historial; en hosts
+#                      compartidos usa el asistente, que lo pide oculto).
 #   --skip-preflight   Degrada los aborts del preflight a warnings (bajo tu
 #                      responsabilidad; útil en entornos no estándar).
 #
@@ -38,6 +44,7 @@ fi
 # --- Parse args ---
 DOMAIN=""
 EMAIL=""
+ADMIN_EMAIL=""
 SMTP_USER=""
 SMTP_PASS=""
 SKIP_PREFLIGHT=0
@@ -46,18 +53,120 @@ for arg in "$@"; do
   case "$arg" in
     --domain=*)       DOMAIN="${arg#--domain=}" ;;
     --email=*)        EMAIL="${arg#--email=}" ;;
+    --admin-email=*)  ADMIN_EMAIL="${arg#--admin-email=}" ;;
     --smtp-user=*)    SMTP_USER="${arg#--smtp-user=}" ;;
     --smtp-pass=*)    SMTP_PASS="${arg#--smtp-pass=}" ;;
     --skip-preflight) SKIP_PREFLIGHT=1 ;;
-    --help|-h)        sed -n '2,25p' "$0"; exit 0 ;;
+    --help|-h)        sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "Argumento desconocido: $arg" >&2; exit 1 ;;
   esac
 done
 
+# Validación de formato (misma para flags y asistente). Charsets cerrados:
+# también protegen las interpolaciones posteriores (sqlite, nginx, certbot).
+RE_DOMAIN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+RE_EMAIL='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+
+valida() { # valida VALOR REGEX → 0/1
+  printf '%s' "$1" | grep -Eq "$2"
+}
+
+# pregunta "texto" VAR REGEX "default" "mensaje de error"
+pregunta() {
+  local texto="$1" var="$2" re="$3" def="${4:-}" err="${5:-valor no válido}" val
+  while :; do
+    if [ -n "$def" ]; then
+      read -r -p "$texto [$def]: " val
+      val="${val:-$def}"
+    else
+      read -r -p "$texto: " val
+    fi
+    val="$(printf '%s' "$val" | tr -d '[:space:]')"
+    if valida "$val" "$re"; then
+      printf -v "$var" '%s' "$val"
+      return 0
+    fi
+    echo "  ERROR: $err" >&2
+  done
+}
+
+# --- Asistente dirigido: sin --domain/--email y con terminal ----------------
 if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
-  echo "ERROR: --domain y --email son obligatorios." >&2
-  echo "Uso: sudo bash $0 --domain=lab.example.com --email=admin@example.com" >&2
-  exit 1
+  if [ ! -t 0 ]; then
+    echo "ERROR: sin terminal interactivo, --domain y --email son obligatorios." >&2
+    echo "Uso: sudo bash $0 --domain=lab.example.com --email=admin@example.com" >&2
+    echo "     (o ejecuta 'sudo bash $0' desde un terminal para el asistente dirigido)" >&2
+    exit 1
+  fi
+
+  echo "============================================================"
+  echo "  ASISTENTE DE INSTALACIÓN — LXD REMOTE WEB DESKTOPS"
+  echo "============================================================"
+  echo "Este asistente pide los datos necesarios y después instala TODO"
+  echo "el sistema (dependencias, LXD, provision-api, Guacamole, Nginx,"
+  echo "certificado TLS) sin más intervención."
+  echo ""
+  echo "ATENCIÓN: si existe una instalación previa del proyecto en este"
+  echo "host, se desinstalará y se reinstalará de cero."
+  echo ""
+
+  echo "1/4 — Dominio público del portal. Necesita un registro DNS A"
+  echo "      apuntando a la IP pública de este host (certbot emitirá el"
+  echo "      certificado TLS para él)."
+  pregunta "  Dominio (ej. lab.example.com)" DOMAIN "$RE_DOMAIN" "" \
+    "dominio no válido (minúsculas, ej. lab.example.com)"
+  echo ""
+
+  echo "2/4 — Email para Let's Encrypt (avisos de caducidad del certificado)."
+  pregunta "  Email para certbot" EMAIL "$RE_EMAIL" "" "email no válido"
+  echo ""
+
+  echo "3/4 — Primer administrador de la consola web (/admin). Se dará de"
+  echo "      alta automáticamente para que puedas entrar con magic link."
+  pregunta "  Email del administrador" ADMIN_EMAIL "$RE_EMAIL" "$EMAIL" "email no válido"
+  echo ""
+
+  echo "4/4 — Credenciales SMTP para enviar los magic links (Mailtrap en"
+  echo "      dev; SendGrid/SES u otro real en prod). Puedes dejarlo para"
+  echo "      después editando /etc/provision/provision.env, pero sin SMTP"
+  echo "      nadie podrá iniciar sesión."
+  read -r -p "  ¿Configurar SMTP ahora? [S/n]: " resp
+  case "${resp,,}" in
+    n|no)
+      echo "  (SMTP quedará pendiente: MAILTRAP_USER/MAILTRAP_PASS en el .env)"
+      ;;
+    *)
+      read -r -p "  Usuario SMTP: " SMTP_USER
+      read -r -s -p "  Password SMTP (no se muestra al teclear): " SMTP_PASS
+      echo ""
+      ;;
+  esac
+  echo ""
+
+  echo "============================================================"
+  echo "  RESUMEN DE LA INSTALACIÓN"
+  echo "  Dominio            : $DOMAIN"
+  echo "  Email certbot      : $EMAIL"
+  echo "  Admin de la consola: $ADMIN_EMAIL"
+  if [ -n "$SMTP_USER" ]; then
+    echo "  SMTP               : configurado (usuario: $SMTP_USER)"
+  else
+    echo "  SMTP               : pendiente (rellenar tras instalar)"
+  fi
+  echo "  Instalación limpia : desinstala cualquier instalación previa"
+  echo "============================================================"
+  read -r -p "¿Continuar con la instalación? [s/N]: " resp
+  case "${resp,,}" in
+    s|si|sí|y|yes) ;;
+    *) echo "Instalación cancelada. No se ha tocado nada."; exit 0 ;;
+  esac
+fi
+
+# Validar también los valores llegados por flag (mismo charset cerrado).
+valida "$DOMAIN" "$RE_DOMAIN" || { echo "ERROR: --domain no válido: $DOMAIN" >&2; exit 1; }
+valida "$EMAIL" "$RE_EMAIL"   || { echo "ERROR: --email no válido: $EMAIL" >&2; exit 1; }
+if [ -n "$ADMIN_EMAIL" ]; then
+  valida "$ADMIN_EMAIL" "$RE_EMAIL" || { echo "ERROR: --admin-email no válido: $ADMIN_EMAIL" >&2; exit 1; }
 fi
 
 # apt nunca interactivo en toda la instalación + preseed de iptables-persistent
@@ -415,6 +524,21 @@ else
   journalctl -u provision --no-pager -n 20 >&2 || true
 fi
 
+# 4.5 Sembrar el primer admin de la consola (email ya validado contra
+#     RE_EMAIL, charset cerrado sin comillas → interpolación SQL segura).
+if [ -n "$ADMIN_EMAIL" ]; then
+  DB_PATH="/var/lib/provision/provision.db"
+  if [ -f "$DB_PATH" ]; then
+    if sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO admins(email,role,active,created_at) VALUES('$ADMIN_EMAIL','admin',1,datetime('now'));"; then
+      echo "OK: admin de la consola dado de alta: $ADMIN_EMAIL"
+    else
+      echo "WARN: no se pudo sembrar el admin; hazlo por SQL (ver docs/USO.md)" >&2
+    fi
+  else
+    echo "WARN: $DB_PATH aún no existe; da de alta el admin por SQL (ver docs/USO.md)" >&2
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 5. FASE 4 — Guacamole + guacd + Nginx + iptables
 # ---------------------------------------------------------------------------
@@ -480,14 +604,15 @@ if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
   echo ""
 fi
 echo "Pasos siguientes:"
-echo "  1. Sembrar matrícula (alumno → lab):"
-echo "     sudo sqlite3 /var/lib/provision/provision.db <<SQL"
-echo "     INSERT OR IGNORE INTO labs(nombre, imagen, activo) VALUES('lab1','local:lab-vm-base',1);"
-echo "     INSERT OR IGNORE INTO enrollments(alumno_id,email,lab,active,created_at)"
-echo "       VALUES('alumno1','alumno@ejemplo.com','lab1',1,datetime('now'));"
-echo "     SQL"
-echo "  2. Probar magic link: curl -X POST http://127.0.0.1:8000/auth/request -H 'Content-Type: application/json' -d '{\"email\":\"alumno@ejemplo.com\"}'"
-echo "  3. Abrir https://$DOMAIN en el navegador."
+if [ -n "$ADMIN_EMAIL" ]; then
+  echo "  1. Entra en la consola admin: https://$DOMAIN/admin/login"
+  echo "     (magic link al email: $ADMIN_EMAIL)"
+else
+  echo "  1. Da de alta un admin (ver docs/USO.md) y entra en https://$DOMAIN/admin/login"
+fi
+echo "  2. Crea el lab (pestaña Labs) y matricula alumnos (pestaña Matrículas)."
+echo "  3. El alumno entra en https://$DOMAIN con su email de matrícula."
+echo "  (Alternativa por SQL/curl: ver docs/USO.md, sección 'Operación avanzada')"
 echo ""
 echo "Para desinstalar: sudo bash uninstall-all.sh --domain=$DOMAIN"
-echo "Para reinstalar : sudo bash $0 --domain=$DOMAIN --email=$EMAIL"
+echo "Para reinstalar : sudo bash $0   (asistente) o con flags --domain/--email"

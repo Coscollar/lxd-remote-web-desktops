@@ -7,24 +7,46 @@ convertirlos a LF antes de ejecutarlos.
 > Nota: el script de setup en disco se llama `server-setup-lxd.sh` (un
 > comentario interno aún referencia `1-server-setup-lxd.sh`).
 
-## Despliegue en un comando (recomendado)
+## Despliegue con un único script (recomendado)
 
 El entrypoint único es `install-all.sh`: desinstala cualquier instalación
 previa, instala dependencias del sistema, y ejecuta todas las fases
 (0→6) generando secretos automáticamente.
 
+**Modo dirigido (por defecto).** Ejecutado sin flags desde un terminal,
+arranca un asistente que pide todo lo necesario, valida cada dato, muestra
+un resumen y pide confirmación antes de tocar nada:
+
 ```bash
 git clone https://github.com/Coscollar/lxd-remote-web-desktops.git
 cd lxd-remote-web-desktops
-sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com \
-     [--smtp-user=xxx --smtp-pass=yyy]
+sudo bash install-all.sh
 ```
 
-- `--domain` y `--email` son **obligatorios**.
+El asistente pregunta:
+
+1. **Dominio público** del portal (necesita registro DNS A hacia el host).
+2. **Email para certbot** (avisos de Let's Encrypt).
+3. **Email del primer administrador** de la consola `/admin` (se siembra
+   automáticamente en la tabla `admins`; por defecto, el mismo de certbot).
+4. **Credenciales SMTP** para los magic links (el password se pide oculto,
+   sin quedar en `ps` ni en el historial). Se puede posponer y rellenar
+   después en `/etc/provision/provision.env`.
+
+**Modo no interactivo (automatización).** Los mismos datos por flags:
+
+```bash
+sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com \
+     [--admin-email=admin@example.com --smtp-user=xxx --smtp-pass=yyy]
+```
+
+- `--domain` y `--email` son **obligatorios** en este modo (sin terminal no
+  hay asistente).
+- `--admin-email` opcional: siembra el primer admin de la consola.
 - `--smtp-user` / `--smtp-pass` opcionales (si se omiten, se deja Mailtrap
   sin credenciales para rellenar a mano en `/etc/provision/provision.env`).
   Nota: los valores pasados por flag quedan visibles en `ps`/historial de
-  shell; en hosts compartidos, rellénalos a mano en el `.env`.
+  shell; en hosts compartidos usa el asistente (los pide ocultos).
 - `--skip-preflight` degrada los aborts del preflight a warnings (bajo tu
   responsabilidad; ver §0b).
 - Re-ejecutable: siempre hace limpieza previa (`uninstall-all.sh --yes`).

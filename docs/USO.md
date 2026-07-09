@@ -83,7 +83,9 @@ Desde la consola (pestañas) puedes:
   Reset de la instancia shared (Reset = stop + start).
 
 > **Alta de admins:** deliberadamente NO existe en la consola ni en la API.
-> Es el privilegio máximo y se gestiona solo por SQL (ver más abajo).
+> Es el privilegio máximo y se gestiona solo por SQL (ver más abajo). El
+> **primer** admin lo siembra el instalador (asistente dirigido o
+> `--admin-email`), también vía SQL bajo el capó.
 
 Todas las mutaciones de la API admin exigen el header
 `X-Requested-With: XMLHttpRequest` además de la cookie `admin_token` (o

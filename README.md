@@ -155,7 +155,7 @@ estar vacío, y `docker ps` debe mostrar guacd **sin** puertos publicados.
 - [`docs/USO.md`](docs/USO.md) — Instrucciones de uso para alumnos y
   administradores (consola web + CLI de respaldo).
 
-## Instalación rápida (un comando)
+## Instalación (un único script, asistente dirigido)
 
 Requisitos: un **Ubuntu Server 22.04/24.04 limpio** con root, DNS apuntando
 al host, 80/443 abiertos y virtualización KVM (`/dev/kvm`). **Sin
@@ -168,13 +168,24 @@ todas las fases (0→6) generando secretos automáticamente (quedan en
 ```bash
 git clone https://github.com/Coscollar/lxd-remote-web-desktops.git
 cd lxd-remote-web-desktops
-sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com
+sudo bash install-all.sh
 ```
 
-`--domain` y `--email` son obligatorios. Opcionales: `--smtp-user`,
-`--smtp-pass`, `--skip-preflight` (degrada los aborts del preflight a
-warnings). El script convierte CRLF→LF internamente. Si el grupo `lxd`
-no está activo, aborta con `exit 100` → re-login y reejecutar.
+Sin flags, arranca el **asistente dirigido**: pide el dominio público, el
+email para certbot, el primer administrador de la consola (lo da de alta
+automáticamente) y las credenciales SMTP para los magic links (el password
+se pide oculto), valida cada dato, muestra un resumen y pide confirmación
+antes de tocar nada.
+
+Para automatización (sin terminal), los mismos datos van por flags:
+
+```bash
+sudo bash install-all.sh --domain=lab.example.com --email=admin@example.com \
+  [--admin-email=admin@example.com --smtp-user=xxx --smtp-pass=yyy] [--skip-preflight]
+```
+
+El script convierte CRLF→LF internamente. Si el grupo `lxd` no está activo,
+aborta con `exit 100` → re-login y reejecutar.
 
 `install-all.sh` incluye la FASE 6 (portal web + apps stateless + consola
 admin): amplía `stateless-pool` a 80GB, `lab-stateless` a /23, construye
