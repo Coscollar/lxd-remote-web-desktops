@@ -1,4 +1,4 @@
-# 10. Referencias
+# Capítulo 10. Referencias
 
 <!-- FICHERO VIVO: cada redactor registra aquí sus citas AL MOMENTO.
      Formato: ISO 690-2010, sistema nombre-fecha (citas en texto como
@@ -18,7 +18,7 @@
 - HASSAN, I. Levereging Apache Guacamole, Linux LXD and Docker Containers to Deliver a Secure Online Lab for a Large Cybersecurity Course. En: *2022 IEEE Frontiers in Education Conference (FIE)*. IEEE, 2022. DOI: 10.1109/FIE56618.2022.9962510. <!-- citada en cap. 2; el título conserva la grafía original de la publicación -->
 - MA, J.; NICKERSON, J. V. Hands-on, simulated, and remote laboratories: A comparative literature review. *ACM Computing Surveys*, 2006, vol. 38, n.º 3, artículo 7. DOI: 10.1145/1132960.1132961. <!-- citada en cap. 2 -->
 - MERKEL, D. Docker: lightweight Linux containers for consistent development and deployment. *Linux Journal*, 2014, n.º 239. <!-- citada en cap. 2 -->
-- NACIONES UNIDAS. *Transformar nuestro mundo: la Agenda 2030 para el Desarrollo Sostenible*. Resolución A/RES/70/1 aprobada por la Asamblea General el 25 de septiembre de 2015. Nueva York: Naciones Unidas, 2015.
+- NACIONES UNIDAS. *Transformar nuestro mundo: la Agenda 2030 para el Desarrollo Sostenible*. Resolución A/RES/70/1 aprobada por la Asamblea General el 25 de septiembre de 2015. Nueva York: Naciones Unidas, 2015. <!-- citada en cap. 1 -->
 - RICHARDSON, T.; STAFFORD-FRASER, Q.; WOOD, K. R.; HOPPER, A. Virtual Network Computing. *IEEE Internet Computing*, 1998, vol. 2, n.º 1, pp. 33-38. DOI: 10.1109/4236.656066. <!-- citada en cap. 2 -->
 - SOLTESZ, S.; PÖTZL, H.; FIUCZYNSKI, M. E.; BAVIER, A.; PETERSON, L. Container-based operating system virtualization: a scalable, high-performance alternative to hypervisors. En: *Proceedings of the 2nd ACM SIGOPS/EuroSys European Conference on Computer Systems (EuroSys '07)*. Nueva York: ACM, 2007, pp. 275-287. DOI: 10.1145/1272996.1273025. <!-- citada en cap. 2 -->
 - UNIÓN EUROPEA. Reglamento (UE) 2016/679 del Parlamento Europeo y del Consejo, de 27 de abril de 2016, relativo a la protección de las personas físicas en lo que respecta al tratamiento de datos personales y a la libre circulación de estos datos (Reglamento General de Protección de Datos). *Diario Oficial de la Unión Europea*, 4 de mayo de 2016, L 119, pp. 1-88. <!-- citada en cap. 3 -->

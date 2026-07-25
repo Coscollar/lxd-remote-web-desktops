@@ -295,6 +295,152 @@ sección; revertido antes de continuar.
 **No se encontraron** hallazgos ALTA/CRÍTICA nuevos de veracidad ni de
 formato que no estuvieran ya previstos en §7 original de este plan.
 
+## 9. Registro de la pasada de revisión de 2026-07-25
+
+A diferencia de la pasada de §8 (23/07, sin herramienta Agent, críticos
+emulados leyendo sus definiciones), esta pasada invocó **realmente** los
+tres críticos mediante la herramienta Agent —`critic-tfg-formato`,
+`critic-tfg-academico`, `critic-tfg-veracidad`, cada uno como agente de
+solo lectura independiente— sobre el estado *actual* de los 14 ficheros de
+`tfg/`, sin dar por buenas las correcciones de §8: ocho de los catorce
+ficheros tenían ediciones posteriores a esa fecha (04, 06, 08 del 24/07;
+01, 02, 03, 05, 07 del 25/07) que nunca habían pasado ningún crítico. Las
+correcciones las aplicó @tfg-build directamente con Edit; los tres
+críticos no modificaron ningún fichero.
+
+### Hallazgos reales devueltos y corrección aplicada
+
+**`critic-tfg-formato`** (sin ALTA/CRÍTICA): estructura oficial completa,
+resumen/palabras clave/objetivos correctos, verificación bidireccional de
+`10-referencias.md` correcta, ningún encabezado por encima de nivel 3.
+Hallazgos MEDIA/BAJA, todos corregidos:
+- Notas al pie de `04-diseno.md` sin fecha de consulta → añadida
+  `[consulta: 15 de julio de 2026]` a las cinco.
+- Extensión del cuerpo por encima del margen aceptable → recorte aplicado
+  (ver tabla siguiente).
+- Orden alfabético roto en `A1-glosario.md` (FIFO/FastAPI/FOSS,
+  HS256/Heartbeat/Hipervisor) → reordenado.
+- Entrada de NACIONES UNIDAS en `10-referencias.md` sin anotación de
+  capítulo → añadida.
+- Título de `10-referencias.md` con formato distinto al resto → unificado
+  a "Capítulo 10. Referencias".
+- Acrónimo LOPDGDD sin expandir ni glosario → expandido en `03-analisis.md`
+  y añadida entrada en `A1-glosario.md`.
+- Figuras 4.2/4.3 sin la aclaración de equivalencia notacional que sí
+  lleva la 3.1 → añadida a ambos pies.
+
+**`critic-tfg-academico`** (2 ALTA, 4 MEDIA, 3 BAJA), todos corregidos o
+matizados:
+- **[ALTA]** Atribución causal no sustentada del salto de productividad de
+  junio a la metodología de agentes (repetida y reforzada en 3.7, 5.1 y
+  8.1 mediante citas cruzadas entre sí) → reescrita en los tres capítulos
+  para distinguir el indicio (aumento de integraciones) de la prueba
+  causal, reconociendo la arquitectura ya fijada como variable alternativa.
+- **[ALTA]** Cifras de la Tabla 7.2 marcadas "estimación documentada" sin
+  mostrar método de derivación (referencia circular a `README.md`) →
+  añadido párrafo que aclara su naturaleza de orden de magnitud, no de
+  cálculo verificable, y que remite la verificación empírica a Trabajos
+  futuros.
+- **[MEDIA]** `04-diseno.md` presentaba como hecho una suposición sobre el
+  plan de estudios del alumno → matizada con remisión a 8.2.
+- **[MEDIA]** Deuda de la lista blanca del puerto 8000 repetida casi
+  literalmente en cinco lugares → mantenida completa solo en 5.2 (su
+  origen narrativo); en 3.3, 4.1 (dos apariciones) y 9.1 sustituida por
+  una remisión breve.
+- **[MEDIA]** *Middleware* y SSRF usados sin glosa en su primera aparición
+  en prosa → añadido inciso explicativo en `03-analisis.md` §3.3.
+- **[MEDIA]** Un mismo requisito (RNF-04) asignado a OE1 y OE3 sin
+  distinguir el motivo → aclarado con una subordinada que explica el
+  vínculo indirecto con OE1.
+- **[MEDIA]** Generalización de un único estudio (Felter et al., 2015)
+  como "estudios... confirmaron" en plural → reescrito como resultado de
+  "un estudio comparativo de referencia".
+- **[BAJA]** Fecha del Gantt de redacción de la memoria (hasta 31/07) y
+  fraseo de "guardián del *pool* de cierre seguro" → el segundo corregido;
+  el primero se deja para revisión del alumno antes del depósito (sigue
+  siendo una fecha futura válida a día de hoy).
+- **[BAJA]** Recordatorio de convertir los diagramas Mermaid a imagen antes
+  del depósito → ya cubierto por el guion (§5); sin acción sobre el texto.
+
+**`critic-tfg-veracidad`** (0 CRÍTICA/ALTA; fidelidad "muy alta" contra el
+código real, incluida la verificación de los Fragmentos 5.1-5.3, el
+esquema completo de la BD, los umbrales del *pool guard*, los TTLs, y el
+recuento real de commits de junio frente a marzo-mayo vía `git log`), 1
+MEDIA y 2 BAJA, corregidas:
+- **[MEDIA]** La cifra "~5 VMs efectivas" de `07-pruebas.md` (descontando
+  sistema, Guacamole y presupuesto de apps) no tiene respaldo documental en
+  el repositorio, a diferencia de la cota bruta de 8 → reescrita para
+  declarar explícitamente que es un descuento razonado pero no medido ni
+  documentado, sin inventar una cifra final.
+- **[BAJA]** La Figura 4.1 y la Tabla 4.1 rotulan el flujo `auth_request`
+  con los nombres de los endpoints de backend (`/verify`, `/verify/app`,
+  `/admin/verify`), distintos de los nombres reales de las *location*
+  internas de `nginx/lab.conf` (`/verify`, `/verify_app`,
+  `/verify_admin`) → añadida nota aclaratoria al pie de la Figura 4.1.
+- **[BAJA]** Precisión menor sobre `ADMIN_TOTP_KEY` entre los ocho secretos
+  de `06-implantacion.md` (correcto, sin discrepancia) → sin acción, ya
+  matizado en 3.1.
+
+### Recorte de extensión aplicado en esta pasada
+
+Las correcciones de veracidad y rigor añadieron inicialmente más texto del
+que quitaron (el cuerpo llegó a 20.238 palabras). Se aplicó a continuación
+la regla "Recorte si excede" de §3 respetando la protección de 3.3, 3.6,
+4.1 y 4.2: compresión de 1.3 (Introducción), de 3.4 y del cierre de 3.7
+(Análisis), de 4.4 (Diseño), reducción de 5.2 de cinco a los cuatro
+problemas más ilustrativos (Desarrollo, fusionando la nota CRLF con la
+remisión al Anexo A3.2), compresión de la Tabla 7.2 y su análisis
+(Pruebas), de un párrafo de 6.2 (Implantación) y de los cinco bloques de
+9.1 (Trabajos futuros).
+
+| Fichero | Antes de esta pasada | Después | Variación |
+|---|---|---|---|
+| 01-introduccion.md | 1.809 | 1.772 | -2 % |
+| 02-estado-del-arte.md | 2.197 | 2.202 | +0,2 % |
+| 03-analisis.md | 4.232 | 4.274 | +1 % |
+| 04-diseno.md | 3.942 | 4.035 | +2 % |
+| 05-desarrollo.md | 2.132 | 2.103 | -1 % |
+| 06-implantacion.md | 1.472 | 1.444 | -2 % |
+| 07-pruebas.md | 1.467 | 1.548 | +6 % |
+| 08-conclusiones.md | 1.062 | 1.074 | +1 % |
+| 09-trabajos-futuros.md | 606 | 564 | -7 % |
+| 10-referencias.md | 854 | 861 | +1 % |
+| **Total cuerpo** | **19.773** | **19.877** | **+0,5 %** |
+
+El total queda 377 palabras (1,9 %) por encima del techo de 19.500 fijado
+en §8, frente a las 273 (1,4 %) de la pasada anterior. El incremento neto
+frente al inicio de esta pasada no es relleno: es la consecuencia directa
+de corregir dos hallazgos ALTA reales de rigor académico (atribución
+causal de la productividad de junio, cifras de capacidad sin método de
+derivación) y varios MEDIA de veracidad y formato, todos ellos
+verificados contra el repositorio y contra un crítico real, no emulado.
+Aplicando la misma regla que en §8 (recortar sin tocar 3.3/3.6/4.1/4.2),
+el margen adicional ya se agotó: 3.7-3.8 y 4.4 quedaron reducidos al
+mínimo compatible con conservar su contenido probatorio, y 2.1-2.5 no se
+tocaron porque ningún crítico los señaló como sobrantes (la densidad de
+citas de ese capítulo es precisamente lo que exige el guion). Si una
+revisión futura necesita bajar estrictamente de 19.500, el único margen
+restante sin romper las protecciones es acortar aún más la Tabla 2.1 o
+fusionar 2.3 con 2.1 como prevé la regla de recorte de §3, o aceptar el
+desvío como el tribunal aceptaría un TFG de 56-57 páginas de cuerpo frente
+a una horquilla oficial de 50-100.
+
+### Pendiente exclusivamente para el alumno (sin cambios respecto a §7/§8)
+
+La lista de `[RELLENAR]` verificada en §7 y reconfirmada en §8 sigue
+completa y sin variación tras esta pasada: nombre/tutor/curso; confirmación
+del título con la Comisión Académica; formato de citas con el tutor
+(ISO 690-2010 asumido); política UPV de declaración de uso de IA vigente
+en la convocatoria; asignaturas exactas y competencias transversales del
+plan de estudios (8.2); licencia del repositorio (3.4); capturas de
+pantalla reales del asistente, portal y consola (Figuras 6.1-6.3);
+motivación personal de 1.1 (ajustar o ampliar el párrafo en 1ª persona); y
+confirmación de fecha/commit de la ejecución final de la Tabla 7.1 sobre
+la versión depositada. Se añade una comprobación menor nueva, detectada en
+esta pasada: revisar antes del depósito que la barra "Redacción de la
+memoria" del Gantt de la Figura 3.2 (hasta el 31/07/2026) siga
+correspondiendo con la fecha real de cierre.
+
 ---
 
 Fin del guion. Siguiente paso: ejecutar @tfg-build sobre este plan.

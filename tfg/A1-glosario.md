@@ -36,9 +36,9 @@
 
 **Fail-fast (fallo temprano)** — Principio por el que un proceso comprueba sus precondiciones al inicio y aborta inmediatamente si no se cumplen, en lugar de fallar más tarde con el trabajo a medias; lo aplican el preflight del instalador y la carga de configuración del orquestador. <!-- fuente: install-all.sh:0b; provision/config.py -->
 
-**FIFO (First In, First Out)** — Política de rotación en la que, al alcanzarse el límite de elementos, se elimina el más antiguo para dar sitio al nuevo; es la rotación de las instantáneas `k1..k5`. <!-- fuente: provision/policy.py; docs/DEPLOY.md:Anexo C.1 -->
-
 **FastAPI** — *Framework* web para Python orientado a APIs, con validación de datos y ejecución asíncrona; es la base del orquestador de este proyecto. <!-- fuente: provision/main.py -->
+
+**FIFO (First In, First Out)** — Política de rotación en la que, al alcanzarse el límite de elementos, se elimina el más antiguo para dar sitio al nuevo; es la rotación de las instantáneas `k1..k5`. <!-- fuente: provision/policy.py; docs/DEPLOY.md:Anexo C.1 -->
 
 **FOSS (Free and Open Source Software)** — Software libre y de código abierto, cuya licencia permite usarlo, estudiarlo, modificarlo y redistribuirlo sin coste de licencia. <!-- fuente: cap. 2 -->
 
@@ -46,9 +46,9 @@
 
 **Heartbeat** — Señal periódica que un componente envía para acreditar que sigue activo; aquí, cada VM la emite cada cinco minutos hacia el orquestador, que la usa para decidir la destrucción por inactividad (las aplicaciones efímeras carecen hoy de latido propio; véase 4.2.3). <!-- fuente: docs/USO.md:Scripts de laboratorio; provision/apps.py -->
 
-**HS256 (HMAC-SHA256)** — Algoritmo de firma simétrica usado en los JWT del sistema: quien conoce el secreto puede emitir y verificar testigos. <!-- fuente: provision/auth.py -->
-
 **Hipervisor** — Software que reparte los recursos de una máquina física entre varias máquinas virtuales, gestionando su creación, aislamiento y ejecución. <!-- fuente: cap. 2 -->
+
+**HS256 (HMAC-SHA256)** — Algoritmo de firma simétrica usado en los JWT del sistema: quien conoce el secreto puede emitir y verificar testigos. <!-- fuente: provision/auth.py -->
 
 **IaaS (Infrastructure as a Service)** — Modelo de nube que ofrece infraestructura de cómputo, red y almacenamiento virtualizada bajo demanda, sobre la que el cliente despliega sus propios sistemas. <!-- fuente: cap. 2 -->
 
@@ -69,6 +69,8 @@
 **KVM (Kernel-based Virtual Machine)** — Hipervisor integrado en el núcleo Linux que permite ejecutar máquinas virtuales con aceleración por hardware. <!-- fuente: install-all.sh (preflight /dev/kvm) -->
 
 **Let's Encrypt** — Autoridad de certificación gratuita y automatizada que emite certificados TLS reconocidos por los navegadores; los valida mediante retos como HTTP-01 (servir un fichero en el puerto 80). <!-- fuente: nginx/install.sh; cap. 4 -->
+
+**LOPDGDD (Ley Orgánica de Protección de Datos Personales y garantía de los derechos digitales)** — Norma española de 2018 que desarrolla el Reglamento General de Protección de Datos europeo; regula el tratamiento de datos personales, incluidos los de los alumnos matriculados en la plataforma. <!-- fuente: cap. 3 (España, 2018) -->
 
 **LXC (Linux Containers)** — Tecnología de contenedores de sistema del núcleo Linux sobre la que se construye LXD; también la usa Proxmox VE para sus contenedores. <!-- fuente: cap. 2 -->
 
