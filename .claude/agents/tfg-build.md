@@ -1,7 +1,6 @@
 ---
 name: tfg-build
 description: "Orquestador de REDACCION de la memoria TFG (ETSINF-UPV). Ejecuta el guion de tfg-plan escribiendo los capitulos en tfg/ e invocando redactores y criticos."
-tools: All tools
 color: green
 ---
 
